@@ -137,7 +137,6 @@ impl ActWatch {
         };
 
         // Create labels for x-axis
-        let mut labels_row = iced::widget::Row::new().spacing(10);
         // We will just put an empty row and let canvas handle it, or align them manually.
         // Actually it's easier to let canvas draw if needed, but text in canvas is tedious.
         // Let's just do a row with fill spacing.

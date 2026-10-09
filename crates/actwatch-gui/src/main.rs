@@ -202,7 +202,7 @@ impl ActWatch {
             let m = (app.time_secs % 3600) / 60;
             app_rows = app_rows.push(
                 row![
-                    text(&app.app_id).width(Length::FillPortion(3)),
+                    text(app.app_id.clone()).width(Length::FillPortion(3)),
                     text(format!("{}h {}m", h, m)).width(Length::FillPortion(1)),
                     text("-").width(Length::FillPortion(1)),
                     text(format!("{:.1}%", app.avg_cpu)).width(Length::FillPortion(1)),

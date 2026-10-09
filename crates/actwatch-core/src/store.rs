@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS resource_samples (
     pid       INTEGER NOT NULL,
     cpu_pct   REAL    NOT NULL,
     rss_kb    INTEGER NOT NULL,
-    avg_gpu   REAL    NOT NULL DEFAULT 0.0
+    gpu_pct   REAL    NOT NULL DEFAULT 0.0
 );
 CREATE INDEX IF NOT EXISTS idx_resource_samples_ts ON resource_samples (ts);
 CREATE INDEX IF NOT EXISTS idx_resource_samples_app_ts ON resource_samples (app_id, ts);
@@ -199,7 +199,7 @@ impl Store {
         pid: i64,
         cpu_pct: f64,
         rss_kb: i64,
-        avg_gpu: f64,
+        gpu_pct: f64,
     ) -> Result<()> {
         Self::insert_resource(
             &self.conn,
@@ -208,8 +208,22 @@ impl Store {
             pid,
             cpu_pct,
             rss_kb,
-            avg_gpu,
+            gpu_pct,
         )
+    }
+
+    /// Plural alias of [`Store::record_resource`] (spec name).
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_resources(
+        &self,
+        ts: i64,
+        app_id: &str,
+        pid: i64,
+        cpu_pct: f64,
+        rss_kb: i64,
+        gpu_pct: f64,
+    ) -> Result<()> {
+        self.record_resource(ts, app_id, pid, cpu_pct, rss_kb, gpu_pct)
     }
 
     pub fn insert_event(
@@ -233,12 +247,12 @@ impl Store {
         pid: i64,
         cpu_pct: f64,
         rss_kb: i64,
-        avg_gpu: f64,
+        gpu_pct: f64,
     ) -> Result<()> {
         conn.execute(
-            "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, avg_gpu)
+            "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, gpu_pct)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![ts, app_id, pid, cpu_pct, rss_kb, avg_gpu],
+            params![ts, app_id, pid, cpu_pct, rss_kb, gpu_pct],
         )?;
         Ok(())
     }
@@ -302,7 +316,7 @@ impl Store {
             let (avg_cpu, peak_rss_kb, avg_gpu): (f64, i64, f64) =
                 self.conn.query_row(
                     "SELECT COALESCE(AVG(cpu_pct), 0.0), COALESCE(MAX(rss_kb), 0),
-                            COALESCE(AVG(avg_gpu), 0.0)
+                            COALESCE(AVG(gpu_pct), 0.0)
                      FROM resource_samples
                      WHERE app_id = ?1 AND ts >= ?2 AND ts < ?3",
                     params![app_id, start_ts, end_ts],
@@ -505,12 +519,12 @@ mod tests {
             }
             // Resource samples for one day.
             tx.execute(
-                "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, avg_gpu)
+                "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, gpu_pct)
                  VALUES (?1, 'firefox', 1, 10.0, 500000, 5.0)",
                 params![ts("2026-01-11", 10)],
             )?;
             tx.execute(
-                "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, avg_gpu)
+                "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, gpu_pct)
                  VALUES (?1, 'firefox', 1, 30.0, 700000, 15.0)",
                 params![ts("2026-01-11", 11)],
             )?;
@@ -545,6 +559,10 @@ mod tests {
         store.record_event(ts("2026-01-05", 9), "firefox", "Example", 120).unwrap();
         store.record_event(ts("2026-01-05", 10), "code", "main.rs", 60).unwrap();
         store.record_event(ts("2026-01-06", 9), "firefox", "Other", 30).unwrap();
+        // Plural write-API alias records resource samples too.
+        store
+            .record_resources(ts("2026-01-05", 9), "firefox", 4242, 12.5, 123456, 3.5)
+            .unwrap();
         assert_eq!(store.daily_total_secs("2026-01-05").unwrap(), 180);
         assert_eq!(store.daily_total_secs("2026-01-06").unwrap(), 30);
         assert_eq!(store.daily_total_secs("2026-01-07").unwrap(), 0);
@@ -697,6 +715,11 @@ mod tests {
         let path = dir.join("activity.db");
         let _ = std::fs::remove_dir_all(&dir);
         let store = Store::open_or_create(&path).unwrap();
+        let mode: String = store
+            .conn
+            .query_row("PRAGMA journal_mode;", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
         store.record_event(ts("2026-01-05", 1), "a", "t", 9).unwrap();
         drop(store);
         let store2 = Store::open_or_create(&path).unwrap();

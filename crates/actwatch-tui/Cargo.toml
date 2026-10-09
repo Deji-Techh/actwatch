@@ -9,4 +9,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-actwatch-core = { path = "../actwatch-core" }
+chrono.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true

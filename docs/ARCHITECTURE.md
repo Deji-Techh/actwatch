@@ -32,3 +32,26 @@ with search, plus resource columns (avg CPU %, peak RSS, GPU %).
 - `resource_samples(ts INTEGER, app_id TEXT, pid INTEGER, cpu_pct REAL, rss_kb INTEGER, gpu_pct REAL)`
 - `daily_rollup(day TEXT, app_id TEXT, secs INTEGER, avg_cpu REAL, peak_rss_kb INTEGER, avg_gpu REAL)`
 - `meta(key TEXT PRIMARY KEY, value TEXT)` — schema_version, category map version
+
+## Reading the database (actwatch-cli)
+
+`actwatch` is strictly read-only: it opens the file with
+`SQLITE_OPEN_READ_ONLY` and pins `PRAGMA query_only`. Only `actwatch-daemon`
+writes. All of the CLI's SQL lives in one module,
+`crates/actwatch-cli/src/sql.rs`, so the read contract is auditable in a
+single place.
+
+Two sources back the same row shape, because neither alone is sufficient:
+
+- `daily_rollup` — cheap, carries `avg_cpu` / `peak_rss_kb` / `avg_gpu`, but
+  lags for the current day.
+- `app_events` — live, always current for today, no resource columns.
+
+The default `--source auto` therefore reads **completed days from
+`daily_rollup` and today live from `app_events`**. Rows record which table
+produced them (`source` column in CSV/JSON), so the GUI and TUI can render
+resource columns only where they exist instead of showing stale or empty data.
+
+`ts` is unix seconds; day bucketing uses `date(ts,'unixepoch','localtime')` so
+days follow the local timezone including DST. `day` in `daily_rollup` is
+`YYYY-MM-DD` text, which sorts lexicographically.

@@ -1,0 +1,61 @@
+[Unit]
+Description=actwatch activity collector
+Documentation=file:%h/.local/share/doc/actwatch/README.md
+# The collector needs the Hyprland IPC socket, which only exists once the
+# graphical session is up. `Wants` (not `Requires`) keeps the unit from
+# failing hard on a session without a compositor.
+Wants=graphical-session.target
+After=graphical-session.target
+# PartOf makes the collector follow the session: logging out stops it, and a
+# fresh login brings it back via [Install].
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/actwatch-daemon
+# The whole point of this unit is that it is always running.
+Restart=always
+RestartSec=5s
+
+# Force the database location to match the CLI's default, independent of what
+# the user manager happened to inherit.
+Environment=XDG_DATA_HOME=%h/.local/share
+# HYPRLAND_INSTANCE_SIGNATURE is deliberately not hardcoded: its value is
+# random per session, so the daemon discovers the socket under
+# $XDG_RUNTIME_DIR/hypr/ and falls back to polling `hyprctl clients -j`.
+
+# Low priority: the collector must never be noticeable next to the compositor.
+CPUWeight=10
+Nice=10
+IOSchedulingClass=idle
+# Hard ceiling, well above the <15MB target, so a pathological day cannot
+# trigger the OOM killer for the rest of the session.
+MemoryMax=150M
+MemoryHigh=64M
+
+# Everything the collector needs and nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# The only writable path. The directory itself is created by packaging/
+# install.sh before the unit is started, since ProtectHome blocks mkdir above
+# it. This is the activity database — actwatch never prunes it.
+ReadWritePaths=%h/.local/share/actwatch
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Hyprland IPC is a unix socket; the i915 sampler only reads sysfs.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+IPAddressDeny=any
+
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,42 @@
+[Unit]
+Description=actwatch activity viewer (GUI)
+Documentation=file:%h/.local/share/doc/actwatch/README.md
+Wants=graphical-session.target
+After=graphical-session.target
+PartOf=graphical-session.target
+# The viewer is only useful once the collector has something to show.
+Wants=actwatch-daemon.service
+After=actwatch-daemon.service
+
+[Service]
+Type=simple
+# The wrapper resolves the Wayland socket, which systemd --user does not
+# reliably inherit from the compositor session.
+ExecStart=%h/.local/bin/actwatch-gui-run
+# Unlike the collector, a crashing viewer must not fight the session: a closed
+# window or a bad GPU driver should not produce a restart loop.
+Restart=on-failure
+RestartSec=10s
+
+Environment=XDG_DATA_HOME=%h/.local/share
+
+# Low priority like the daemon, with a larger ceiling because Wayland
+# allocates buffers.
+CPUWeight=10
+Nice=5
+MemoryMax=400M
+MemoryHigh=200M
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/actwatch
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=graphical-session.target

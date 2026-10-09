@@ -1,0 +1,148 @@
+version = 2
+default_category = "utilities"
+
+[[category]]
+id = "social"
+name = "Social"
+color = "#7c5cff"
+order = 1
+patterns = [
+  "firefox",
+  "chromium",
+  "chrome",
+  "brave",
+  "zen",
+  "discord",
+  "telegram",
+  "signal",
+  "element",
+  "slack",
+  "spotify",
+  "reddit",
+  "instagram",
+  "twitter",
+  "tiktok",
+  "whatsapp",
+  "wechat",
+  "zoom",
+  "twitch",
+  "mastodon",
+  "vkontakte",
+  "qutebrowser",
+]
+
+[[category]]
+id = "productivity"
+name = "Productivity"
+color = "#22c55e"
+order = 2
+patterns = [
+  "code",
+  "code-oss",
+  "vscodium",
+  "nvim",
+  "neovim",
+  "vim",
+  "emacs",
+  "zed",
+  "sublime",
+  "jetbrains",
+  "idea",
+  "pycharm",
+  "webstorm",
+  "obsidian",
+  "notion",
+  "logseq",
+  "joplin",
+  "zathura",
+  "okular",
+  "libreoffice",
+  "onlyoffice",
+  "wps",
+  "anki",
+  "obs",
+]
+
+[[category]]
+id = "utilities"
+name = "Utilities"
+color = "#f59e0b"
+order = 3
+patterns = [
+  "alacritty",
+  "kitty",
+  "foot",
+  "wezterm",
+  "ghostty",
+  "konsole",
+  "gnome-terminal",
+  "terminator",
+  "tmux",
+  "warp",
+  "thunar",
+  "nautilus",
+  "dolphin",
+  "ranger",
+  "yazi",
+  "lf",
+  "kdeconnect",
+  "blueman",
+  "pavucontrol",
+  "nm-connection-editor",
+  "gimp",
+  "inkscape",
+  "blender",
+  "kdenlive",
+  "qbittorrent",
+  "transmission",
+  "keepassxc",
+  "bitwarden",
+  "1password",
+  "password-secret-service",
+]
+
+[[category]]
+id = "finance"
+name = "Finance"
+color = "#38bdf8"
+order = 4
+patterns = [
+  "gnucash",
+  "ledger",
+  "kmymoney",
+  "homebank",
+  "fio",
+  "stocker",
+  "investing",
+  "tradingview",
+  "binance",
+  "coinbase",
+  "metamask",
+  "trustwallet",
+  "phantom",
+  "exodus",
+  "electrum",
+  "bitcoin-core",
+]
+
+[[category]]
+id = "terminal"
+name = "Terminal & Tiling"
+color = "#a78bfa"
+order = 5
+patterns = [
+  "hyprland",
+  "sway",
+  "waybar",
+  "wofi",
+  "anyrun",
+  "dmenu",
+  "rofi",
+  "fuzzel",
+  "mako",
+  "grim",
+  "slurp",
+  "swappy",
+  "wlr-randr",
+  "hyprpaper",
+]

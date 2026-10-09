@@ -1,5 +1,5 @@
-use iced::widget::{button, column, row, text, container, pick_list, text_input, scrollable, Space, Rule, canvas, Component};
-use iced::widget::canvas::{Canvas, Cursor, Path, Stroke, Geometry, LineDash};
+use iced::widget::{button, column, row, text, container, pick_list, text_input, scrollable, Space, Rule, canvas};
+use iced::widget::canvas::{Canvas, Path, Stroke, Geometry, LineDash};
 use iced::{Alignment, Element, Length, Theme, Color, Font, Task, application, Subscription, Rectangle, Point, Size};
 use chrono::{Local, NaiveDate, Duration, Datelike};
 use std::collections::HashMap;
@@ -137,11 +137,11 @@ impl ActWatch {
         };
 
         // Create labels for x-axis
-        let mut labels_row = row![].spacing(10);
+        let mut labels_row = iced::widget::Row::new().spacing(10);
         // We will just put an empty row and let canvas handle it, or align them manually.
         // Actually it's easier to let canvas draw if needed, but text in canvas is tedious.
         // Let's just do a row with fill spacing.
-        let mut days_row = row![].width(Length::Fill);
+        let mut days_row = iced::widget::Row::new().width(Length::Fill);
         for (d, _) in &self.weekly_summary {
             let s = match d.weekday() {
                 chrono::Weekday::Mon => "M", chrono::Weekday::Tue => "T",
@@ -245,7 +245,7 @@ impl canvas::Program<Message> for ContainerChartView {
         renderer: &iced::Renderer,
         _theme: &iced::Theme,
         bounds: Rectangle,
-        _cursor: Cursor,
+        _cursor: iced::mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         

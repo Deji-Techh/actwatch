@@ -1,0 +1,17 @@
+[package]
+name = "actwatch-daemon"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "actwatch-daemon"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+serde.workspace = true
+toml.workspace = true
+tracing.workspace = true
+actwatch-core = { path = "../actwatch-core" }

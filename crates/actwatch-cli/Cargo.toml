@@ -1,0 +1,12 @@
+[package]
+name = "actwatch-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "actwatch"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+actwatch-core = { path = "../actwatch-core" }

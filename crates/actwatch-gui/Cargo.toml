@@ -1,0 +1,12 @@
+[package]
+name = "actwatch-gui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "actwatch-gui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+actwatch-core = { path = "../actwatch-core" }

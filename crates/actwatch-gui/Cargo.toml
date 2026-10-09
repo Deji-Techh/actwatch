@@ -9,4 +9,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+iced = { version = "0.13", features = ["canvas", "tokio"] }
 actwatch-core = { path = "../actwatch-core" }
+dirs = "7.0.0"

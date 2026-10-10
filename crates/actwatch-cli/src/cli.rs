@@ -93,8 +93,8 @@ pub struct ExportArgs {
 /// Shared day-range selection. With no flag at all the range is today.
 #[derive(Debug, Args, Clone)]
 pub struct RangeArgs {
-    /// Single day, YYYY-MM-DD
-    #[arg(long, value_name = "YYYY-MM-DD", conflicts_with_all = ["week", "since", "until"])]
+    /// Single day, YYYY-MM-DD (bare `--day` means today)
+    #[arg(long, value_name = "YYYY-MM-DD", num_args(0..=1), default_missing_value = "today", conflicts_with_all = ["week", "since", "until"])]
     pub day: Option<String>,
 
     /// Rolling 7 days ending today

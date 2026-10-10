@@ -11,6 +11,7 @@
 //! UI is app-level only and never renders titles.
 
 use anyhow::{bail, Result};
+use std::path::PathBuf;
 
 /// Window-title privacy policy (default [`TitlePolicy::Off`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -70,16 +71,32 @@ impl TitlePolicy {
     pub fn load() -> Self {
         if let Ok(home) = std::env::var("HOME") {
             if !home.is_empty() {
-                let path = std::path::PathBuf::from(home)
-                    .join(".config/actwatch/categories.toml");
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(policy) = Self::from_toml_str(&content) {
-                        return policy;
+                for base in [
+                    std::env::var("XDG_CONFIG_HOME").ok().filter(|d| !d.trim().is_empty()).map(PathBuf::from),
+                    Some(PathBuf::from(home).join(".config")),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let path = base.join("actwatch/categories.toml");
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(policy) = Self::from_toml_str(&content) {
+                            return policy;
+                        }
                     }
                 }
             }
         }
         TitlePolicy::Off
+    }
+
+    /// One-line explanation for `status` output.
+    pub fn description(self) -> &'static str {
+        match self {
+            TitlePolicy::Off => "window titles are not stored",
+            TitlePolicy::Hash => "window titles are stored as a hash",
+            TitlePolicy::Full => "window titles are stored verbatim",
+        }
     }
 
     /// Apply the policy to a raw window title.

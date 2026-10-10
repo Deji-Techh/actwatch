@@ -59,7 +59,9 @@ impl Category {
         match s.trim().to_lowercase().as_str() {
             "social" => Ok(Category::Social),
             "productivity & finance" | "productivity and finance" | "productivity"
-            | "finance" => Ok(Category::ProductivityFinance),
+            | "productivity_finance" | "productivity-finance" | "finance" => {
+                Ok(Category::ProductivityFinance)
+            }
             "utilities" | "utility" => Ok(Category::Utilities),
             "gaming" | "games" | "game" => Ok(Category::Gaming),
             "media" | "multimedia" | "video" | "music" => Ok(Category::Media),
@@ -77,10 +79,18 @@ impl std::fmt::Display for Category {
 
 #[derive(Debug, Deserialize, Default)]
 struct CategoryToml {
-    /// Canonical override table (v2 contract).
+    /// Override table, two accepted shapes (both may appear):
+    ///
+    /// ```toml
+    /// [categories]
+    /// firefox = "Social"              # map style: app id -> category
+    /// media = ["mpv", "vlc"]          # inline list: category -> apps
+    /// [categories.gaming]
+    /// apps = ["steam", "lutris"]      # section style: category -> apps
+    /// ```
     #[serde(default)]
-    categories: HashMap<String, String>,
-    /// Legacy alias for `[categories]` (pre-v2 config files).
+    categories: HashMap<String, toml::Value>,
+    /// Legacy alias for `[categories]` (pre-v2 config files, map style only).
     #[serde(default)]
     apps: HashMap<String, String>,
 }
@@ -122,6 +132,10 @@ impl Categories {
             "vscode",
             "vscodium",
             "cursor",
+            "t3code",
+            "t3-code",
+            "windsurf",
+            "zed",
             "neovim",
             "nvim",
             "vim",
@@ -226,12 +240,35 @@ impl Categories {
         let parsed: CategoryToml =
             toml::from_str(s).context("parse categories TOML")?;
         // Legacy `[apps]` first so canonical `[categories]` wins on conflict.
-        for (app_id, cat_name) in parsed.apps.iter().chain(parsed.categories.iter()) {
+        for (app_id, cat_name) in &parsed.apps {
             let cat =
                 Category::parse(cat_name).with_context(|| {
                     format!("invalid category for app {app_id:?}")
                 })?;
             self.map.insert(app_id.to_lowercase(), cat);
+        }
+        for (key, value) in &parsed.categories {
+            match value {
+                toml::Value::String(cat_name) => {
+                    // Map style: app id -> category (strict, historical).
+                    let cat = Category::parse(cat_name).with_context(|| {
+                        format!("invalid category for app {key:?}")
+                    })?;
+                    self.map.insert(key.to_lowercase(), cat);
+                }
+                toml::Value::Array(_) | toml::Value::Table(_) => {
+                    // Section/inline-list style: category -> apps.
+                    // Unknown keys are ignored so a partial config never
+                    // breaks history reads.
+                    let Ok(cat) = Category::parse(key) else {
+                        continue;
+                    };
+                    for app_id in category_apps(value) {
+                        self.map.insert(app_id, cat);
+                    }
+                }
+                _ => continue,
+            }
         }
         Ok(())
     }
@@ -241,28 +278,65 @@ impl Categories {
     }
 
     /// Builtins plus `~/.config/actwatch/categories.toml` overrides when the
-    /// file exists. Never fails hard: unreadable/missing config yields builtins.
+    /// file exists (`XDG_CONFIG_HOME` honored). Never fails hard:
+    /// unreadable/missing config yields builtins.
     pub fn load() -> Self {
         let mut cats = Self::builtin();
         if let Ok(home) = std::env::var("HOME") {
             if !home.is_empty() {
-                let path = std::path::PathBuf::from(home)
-                    .join(".config/actwatch/categories.toml");
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let _ = cats.apply_toml_str(&content);
+                for base in [
+                    std::env::var("XDG_CONFIG_HOME").ok().filter(|d| !d.trim().is_empty()).map(std::path::PathBuf::from),
+                    Some(std::path::PathBuf::from(home).join(".config")),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let path = base.join("actwatch/categories.toml");
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        let _ = cats.apply_toml_str(&content);
+                        break;
+                    }
                 }
             }
         }
         cats
     }
 
-    /// Resolve an app_id (case-insensitive) to its category.
+    /// Resolve an app_id (case-insensitive) to its category. Falls back to
+    /// the tail after the last dot, so reverse-DNS ids like
+    /// `com.t3tools.T3Code` hit the `t3code` builtin.
     pub fn categorize(&self, app_id: &str) -> Category {
-        self.map
-            .get(&app_id.to_lowercase())
-            .copied()
-            .unwrap_or(Category::Other)
+        let key = app_id.to_lowercase();
+        if let Some(&cat) = self.map.get(&key) {
+            return cat;
+        }
+        if let Some((_, tail)) = key.rsplit_once('.') {
+            if let Some(&cat) = self.map.get(tail) {
+                return cat;
+            }
+        }
+        Category::Other
     }
+}
+
+/// App ids under a section/inline-list `[categories.<key>]` value: either a
+/// table with an `apps` array or a bare string array. Anything else yields
+/// nothing (a partial config must never break history reads).
+fn category_apps(value: &toml::Value) -> Vec<String> {
+    let items = match value {
+        toml::Value::Array(items) => items.as_slice(),
+        toml::Value::Table(table) => match table.get("apps") {
+            Some(toml::Value::Array(items)) => items.as_slice(),
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    items
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -333,8 +407,31 @@ mod tests {
     }
 
     #[test]
-    fn category_parse_accepts_aliases() {
-        assert_eq!(Category::parse("social").unwrap(), Category::Social);
+    fn section_and_inline_list_styles_work() {
+        let c = Categories::from_toml_str(
+            "[categories.gaming]\napps = [\"Steam\", \"lutris\"]\n\
+             [categories]\nmedia = [\"VLC\"]\nfirefox = \"Social\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.categorize("steam"), Category::Gaming);
+        assert_eq!(c.categorize("lutris"), Category::Gaming);
+        assert_eq!(c.categorize("vlc"), Category::Media);
+        assert_eq!(c.categorize("firefox"), Category::Social);
+        // Unknown section keys are ignored, never fatal.
+        let c = Categories::from_toml_str(
+            "[categories.bogus]\napps = [\"x\"]\n",
+        )
+        .unwrap();
+        assert_eq!(c.categorize("x"), Category::Other);
+        // Config-file key spellings parse.
+        assert_eq!(
+            Category::parse("productivity_finance").unwrap(),
+            Category::ProductivityFinance
+        );
+    }
+
+    #[test]
+    fn category_parse_accepts_aliases() {        assert_eq!(Category::parse("social").unwrap(), Category::Social);
         assert_eq!(
             Category::parse("Productivity").unwrap(),
             Category::ProductivityFinance

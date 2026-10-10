@@ -112,7 +112,11 @@ pub fn resolve(
     let today = today();
 
     let (from, to) = if let Some(day) = day {
-        let d = parse_day(day)?;
+        let d = if day.eq_ignore_ascii_case("today") {
+            today
+        } else {
+            parse_day(day)?
+        };
         (d, d)
     } else if week {
         let from = today

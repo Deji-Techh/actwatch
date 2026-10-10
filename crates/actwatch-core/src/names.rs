@@ -28,7 +28,13 @@ fn default_dirs() -> Vec<PathBuf> {
 }
 
 /// Default config path carrying the `[aliases]` table.
+/// Honors `XDG_CONFIG_HOME`, falling back to `~/.config`.
 fn default_config_path() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+        if !dir.trim().is_empty() {
+            return Some(PathBuf::from(dir).join("actwatch/categories.toml"));
+        }
+    }
     std::env::var("HOME")
         .ok()
         .filter(|h| !h.is_empty())
@@ -83,18 +89,23 @@ impl DisplayNames {
     }
 
     fn parse_aliases(s: &str) -> Result<HashMap<String, String>> {
-        #[derive(serde::Deserialize, Default)]
-        struct AliasToml {
-            #[serde(default)]
-            aliases: HashMap<String, String>,
-        }
-        let parsed: AliasToml =
+        // Parsed as a generic table so both spellings work:
+        //   [aliases]
+        //   "org.gnome.Nautilus" = "Files"   # quoted: literal key
+        //   org.gnome.Nautilus = "Files"     # bare: nested tables, flattened
+        let table: toml::Table =
             toml::from_str(s).map_err(|e| anyhow::anyhow!("parse aliases TOML: {e}"))?;
-        Ok(parsed
-            .aliases
-            .into_iter()
-            .map(|(k, v)| (k.to_lowercase(), v))
-            .collect())
+        let mut out = HashMap::new();
+        if let Some(toml::Value::Table(aliases)) = table.get("aliases") {
+            let mut entries = Vec::new();
+            flatten_entries(aliases, "", &mut entries);
+            for (k, v) in entries {
+                if let Some(name) = v.as_str() {
+                    out.insert(k.to_lowercase(), name.trim().to_string());
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn scan_dir(dir: &Path, entries: &mut HashMap<String, String>) {
@@ -121,18 +132,31 @@ impl DisplayNames {
 
     /// Resolve an app-id to its display name.
     ///
-    /// (1) `[aliases]` override, (2) reserved `"away"` → `"Away"`,
-    /// (3) desktop-file `Name=`, (4) [`DisplayNames::prettify`].
+    /// (1) `[aliases]` override (full id, else the tail after the last dot,
+    /// so `t3code = "T3 Code"` also renames `com.t3tools.T3Code`),
+    /// (2) reserved `"away"` → `"Away"`, (3) desktop-file `Name=` (full id,
+    /// else tail — reverse-DNS ids are often filed under their tail),
+    /// (4) [`DisplayNames::prettify`].
     pub fn resolve(&self, app_id: &str) -> String {
-        let key = app_id.to_lowercase();
+        let key = app_id.trim().to_lowercase();
         if let Some(alias) = self.aliases.get(&key) {
             return alias.clone();
+        }
+        if let Some((_, tail)) = key.rsplit_once('.') {
+            if let Some(alias) = self.aliases.get(tail) {
+                return alias.clone();
+            }
         }
         if key == "away" {
             return "Away".to_string();
         }
         if let Some(name) = self.entries.get(&key) {
             return name.clone();
+        }
+        if let Some((_, tail)) = key.rsplit_once('.') {
+            if let Some(name) = self.entries.get(tail) {
+                return name.clone();
+            }
         }
         Self::prettify(app_id)
     }
@@ -161,6 +185,26 @@ impl DisplayNames {
             app_id.to_string()
         } else {
             joined
+        }
+    }
+}
+
+/// Flattens `a.b.c = value` written as nested tables back into dotted keys,
+/// so bare `org.gnome.Nautilus = "Files"` matches the quoted spelling.
+fn flatten_entries(
+    table: &toml::map::Map<String, toml::Value>,
+    prefix: &str,
+    out: &mut Vec<(String, toml::Value)>,
+) {
+    for (key, value) in table {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            toml::Value::Table(inner) => flatten_entries(inner, &path, out),
+            leaf => out.push((path, leaf.clone())),
         }
     }
 }

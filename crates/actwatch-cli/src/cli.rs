@@ -13,6 +13,10 @@ Every subcommand opens ~/.local/share/actwatch/activity.db read-only.
 Nothing is ever written, migrated or pruned by this tool: history is kept
 forever, and only actwatch-daemon writes to the database.
 
+Output is plain monochrome and app-level: apps are listed by their friendly
+name, and window titles are never shown. Idle time is reported as its own
+`Away` row and is left out of the app totals.
+
 Typical use:
   actwatch status                  health of the collector + database
   actwatch query --day            today so far, per app
@@ -105,7 +109,8 @@ pub struct RangeArgs {
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub until: Option<String>,
 
-    /// Only this app (case-insensitive substring match)
+    /// Only this app (case-insensitive substring on the app id, then on the
+    /// friendly name)
     #[arg(long, value_name = "APP")]
     pub app: Option<String>,
 

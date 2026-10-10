@@ -1,15 +1,20 @@
 //! actwatch — read-only CLI over the local activity database.
 //!
 //! Module map:
-//!   cli.rs      clap surface
-//!   db.rs       read-only connection + path resolution
-//!   sql.rs      every SQL statement, in one place
-//!   model.rs    query results
-//!   date.rs     day ranges and local-time boundaries
-//!   format.rs   table / CSV / JSON rendering
-//!   systemd.rs  systemctl --user helpers
+//!   cli.rs        clap surface
+//!   core_api.rs   the only seam to actwatch-core (names, categories, titles)
+//!   db.rs         read-only connection + path resolution
+//!   sql.rs        every SQL statement, in one place
+//!   model.rs      query results
+//!   date.rs       day ranges and local-time boundaries
+//!   format.rs     table / CSV / JSON rendering
+//!   systemd.rs    systemctl --user helpers
+//!
+//! Output is plain monochrome (no ANSI colour), app-level only (window titles
+//! are never rendered), and idle time is reported separately from app time.
 
 mod cli;
+mod core_api;
 mod date;
 mod db;
 mod format;
@@ -17,6 +22,7 @@ mod model;
 mod sql;
 mod systemd;
 
+use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -24,6 +30,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use cli::{Cli, Command, DaemonCommand, ExportArgs, QueryArgs, RangeArgs};
+use core_api::Catalog;
 use date::DateRange;
 use model::{RangeReport, Source};
 
@@ -31,6 +38,9 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
+        // `actwatch export --csv | head` closes the pipe on us; that is a
+        // normal way to use the tool, not a failure to report.
+        Err(err) if is_broken_pipe(&err) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("actwatch: {err:#}");
             ExitCode::FAILURE
@@ -38,11 +48,31 @@ fn main() -> ExitCode {
     }
 }
 
+fn is_broken_pipe(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
+    })
+}
+
+/// `println!` panics when stdout goes away, which is exactly what happens
+/// under `| head`. Writing by hand keeps the error in the error path.
+fn print_line(line: &str) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    out.write_all(line.as_bytes())
+        .and_then(|()| out.write_all(b"\n"))
+        .context("write to stdout")?;
+    Ok(())
+}
+
 fn run(cli: &Cli) -> Result<()> {
+    let catalog = Catalog::load();
     match &cli.command {
-        Command::Status => status(cli.db.as_deref()),
-        Command::Query(args) => query(cli.db.as_deref(), args),
-        Command::Export(args) => export(cli.db.as_deref(), args),
+        Command::Status => status(cli.db.as_deref(), &catalog),
+        Command::Query(args) => query(cli.db.as_deref(), args, &catalog),
+        Command::Export(args) => export(cli.db.as_deref(), args, &catalog),
         Command::Daemon(cmd) => daemon(cmd),
     }
 }
@@ -58,37 +88,60 @@ fn resolve_range(args: &RangeArgs) -> Result<DateRange> {
     )
 }
 
-fn load_report(db: Option<&Path>, range: &DateRange) -> Result<RangeReport> {
+fn load_report(
+    db: Option<&Path>,
+    range: &DateRange,
+    catalog: &Catalog,
+) -> Result<RangeReport> {
     let path = db::resolve_db_path(db);
     let conn = db::open_ready(&path)?;
     let today = date::format_day(&date::today());
-    sql::build_report(
+    let report = sql::build_report(
         &conn,
         &range.start_day(),
         &range.end_day(),
         &today,
         range.app_str(),
         range.source,
-    )
+    )?;
+
+    // `--app` is applied in SQL against the raw app id, which is what the
+    // daemon recorded. When that finds nothing, try again on the friendly
+    // name so `query --app "Visual Studio Code"` still resolves.
+    match range.app.as_deref() {
+        Some(needle) if report.is_empty() => {
+            let unfiltered = sql::build_report(
+                &conn,
+                &range.start_day(),
+                &range.end_day(),
+                &today,
+                None,
+                range.source,
+            )?;
+            Ok(unfiltered.retain_apps(needle, catalog))
+        }
+        _ => Ok(report),
+    }
 }
 
-fn query(db: Option<&Path>, args: &QueryArgs) -> Result<()> {
+fn query(db: Option<&Path>, args: &QueryArgs, catalog: &Catalog) -> Result<()> {
     let range = resolve_range(&args.range)?;
-    let report = load_report(db, &range)?;
-    println!("{}", format::render_table(&report, &range, args.limit));
+    let report = load_report(db, &range, catalog)?;
+    print_line(&format::render_table(&report, &range, args.limit, catalog))?;
     Ok(())
 }
 
-fn export(db: Option<&Path>, args: &ExportArgs) -> Result<()> {
+fn export(db: Option<&Path>, args: &ExportArgs, catalog: &Catalog) -> Result<()> {
     let range = resolve_range(&args.range)?;
-    let report = load_report(db, &range)?;
+    let report = load_report(db, &range, catalog)?;
     let report = if args.slim { report.slim() } else { report };
 
     if args.json {
-        let json = format::render_json(&report, &range).context("failed to encode JSON")?;
-        println!("{json}");
+        let json = format::render_json(&report, &range, catalog)
+            .context("failed to encode JSON")?;
+        print_line(&json)?;
     } else {
-        println!("{}", format::render_csv(&report));
+        print_line(&format::render_csv(&report, catalog))?;
     }
     Ok(())
 }
@@ -100,11 +153,11 @@ fn daemon(cmd: &DaemonCommand) -> Result<()> {
         DaemonCommand::Stop(a) => ("stop", a.unit.clone(), a.enable),
     };
     let unit = systemd::unit_name(&unit).to_string();
-    println!("{}", systemd::run(&unit, action, enable)?);
+    print_line(&systemd::run(&unit, action, enable)?)?;
     Ok(())
 }
 
-fn status(db: Option<&Path>) -> Result<()> {
+fn status(db: Option<&Path>, catalog: &Catalog) -> Result<()> {
     let path = db::resolve_db_path(db);
     let unit = std::env::var(db::ENV_UNIT).unwrap_or_else(|_| db::DEFAULT_UNIT.to_string());
     let mut rows: Vec<(&str, String)> = Vec::new();
@@ -119,8 +172,9 @@ fn status(db: Option<&Path>) -> Result<()> {
         ));
         rows.push(("daemon", systemd::summary(&unit)));
         rows.push(("config", config_row()));
-        println!("{}", format::heading("actwatch status"));
-        println!("{}", format::render_pairs(&rows));
+        rows.push(("titles", titles_row(catalog)));
+        print_line(&format::heading("actwatch status"))?;
+        print_line(&format::render_pairs(&rows))?;
         return Ok(());
     }
 
@@ -154,18 +208,20 @@ fn status(db: Option<&Path>) -> Result<()> {
             rows.push((
                 "history",
                 format!(
-                    "{span} · {} day{} · {} tracked",
+                    "{span} · {} day{} · {} tracked{}",
                     totals.days,
                     if totals.days == 1 { "" } else { "s" },
-                    format::human_duration(totals.total_secs)
+                    format::human_duration(totals.total_secs),
+                    format::away_phrase(totals.away_secs),
                 ),
             ));
         }
     }
 
+    let today = date::today();
     let today_range = DateRange {
-        from: date::today(),
-        to: date::today(),
+        from: today,
+        to: today,
         app: None,
         source: Source::Auto,
     };
@@ -173,7 +229,7 @@ fn status(db: Option<&Path>) -> Result<()> {
         &conn,
         &today_range.start_day(),
         &today_range.end_day(),
-        &date::format_day(&date::today()),
+        &date::format_day(&today),
         None,
         Source::Auto,
     ) {
@@ -182,11 +238,15 @@ fn status(db: Option<&Path>) -> Result<()> {
             rows.push((
                 "today",
                 format!(
-                    "{} tracked · {} app{} [{}]",
+                    "{} tracked · {}{} [{}]",
                     format::human_duration(report.total_secs()),
-                    report.distinct_apps(),
-                    if report.distinct_apps() == 1 { "" } else { "s" },
-                    sources.join("+")
+                    if report.distinct_apps() == 1 {
+                        "1 app".to_string()
+                    } else {
+                        format!("{} apps", report.distinct_apps())
+                    },
+                    format::away_phrase(report.away_secs()),
+                    sources.join("+"),
                 ),
             ));
         }
@@ -195,9 +255,10 @@ fn status(db: Option<&Path>) -> Result<()> {
 
     rows.push(("daemon", systemd::summary(&unit)));
     rows.push(("config", config_row()));
+    rows.push(("titles", titles_row(catalog)));
 
-    println!("{}", format::heading("actwatch status"));
-    println!("{}", format::render_pairs(&rows));
+    print_line(&format::heading("actwatch status"))?;
+    print_line(&format::render_pairs(&rows))?;
     Ok(())
 }
 
@@ -208,4 +269,11 @@ fn config_row() -> String {
     } else {
         format!("{} (missing — using built-in defaults)", path.display())
     }
+}
+
+/// The CLI is app-level only: it reports the daemon's title policy but never
+/// renders a window title itself.
+fn titles_row(catalog: &Catalog) -> String {
+    let policy = catalog.title_policy();
+    format!("{} — {}", policy.as_str(), policy.description())
 }

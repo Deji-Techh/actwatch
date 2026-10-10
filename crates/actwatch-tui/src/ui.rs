@@ -12,6 +12,7 @@ use ratatui::{
 
 use crate::app::{format_duration, format_pct, format_rss, App, AppMode, SortMode, SortOrder};
 use crate::db::Category;
+use crate::theme;
 
 // Strict monochrome palette per docs/ARCHITECTURE.md:
 // bg #0B0B0C, surface #141416, text #F4F4F5, muted #8E8E93, hairlines #262628. Zero hue.
@@ -359,8 +360,8 @@ impl<'a> Widget for StackedBarWidget<'a> {
             if day.total_secs > 0 {
                 let mut current_y = chart_bottom_y;
 
-                for cat in &Category::ALL {
-                    let cat_secs = *day.category_secs.get(cat).unwrap_or(&0);
+                for cat in Category::all() {
+                    let cat_secs = *day.category_secs.get(&cat).unwrap_or(&0);
                     if cat_secs == 0 {
                         continue;
                     }
@@ -378,8 +379,8 @@ impl<'a> Widget for StackedBarWidget<'a> {
                             let draw_x = col_x + bx;
                             if draw_x < area.x + area.width {
                                 buf[(draw_x, current_y)]
-                                    .set_char(cat.fill_char())
-                                    .set_style(Style::default().fg(cat.gray_shade()));
+                                    .set_char(theme::fill_char(cat))
+                                    .set_style(Style::default().fg(theme::gray_shade(cat)));
                             }
                         }
                     }
@@ -449,8 +450,8 @@ fn render_category_breakdown(f: &mut Frame, app: &App, area: Rect) {
 
     for cat_total in &app.data.category_breakdown {
         let cat = cat_total.category;
-        let shade = cat.gray_shade();
-        let fill_ch = cat.fill_char();
+        let shade = theme::gray_shade(cat);
+        let fill_ch = theme::fill_char(cat);
         let dur_str = format_duration(cat_total.total_secs);
         let pct_str = format!("{:.1}%", cat_total.percentage);
 
@@ -464,7 +465,7 @@ fn render_category_breakdown(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", fill_ch), Style::default().fg(shade)),
             Span::styled(
-                format!("{:<23}", cat.name()),
+                format!("{:<23}", theme::name(cat)),
                 Style::default().fg(THEME_TEXT),
             ),
             Span::styled(
@@ -648,8 +649,8 @@ fn render_app_table(f: &mut Frame, app: &mut App, area: Rect) {
         .enumerate()
         .map(|(idx, app_row)| {
             let is_selected = idx == app.selected_app_index;
-            let shade = app_row.category.gray_shade();
-            let fill_ch = app_row.category.fill_char();
+            let shade = theme::gray_shade(app_row.category);
+            let fill_ch = theme::fill_char(app_row.category);
 
             // Share gauge
             let share_pct = (app_row.duration_secs as f64 / max_app_time as f64).clamp(0.0, 1.0);
@@ -682,7 +683,7 @@ fn render_app_table(f: &mut Frame, app: &mut App, area: Rect) {
                     Span::styled(app_name_display, Style::default().fg(THEME_TEXT)),
                 ]),
                 Line::from(Span::styled(
-                    app_row.category.short_name(),
+                    theme::short_name(app_row.category),
                     Style::default().fg(shade),
                 )),
                 Line::from(Span::styled(

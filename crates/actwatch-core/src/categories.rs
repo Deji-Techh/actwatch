@@ -240,6 +240,22 @@ impl Categories {
         self.map.insert(app_id.to_lowercase(), cat);
     }
 
+    /// Builtins plus `~/.config/actwatch/categories.toml` overrides when the
+    /// file exists. Never fails hard: unreadable/missing config yields builtins.
+    pub fn load() -> Self {
+        let mut cats = Self::builtin();
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() {
+                let path = std::path::PathBuf::from(home)
+                    .join(".config/actwatch/categories.toml");
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let _ = cats.apply_toml_str(&content);
+                }
+            }
+        }
+        cats
+    }
+
     /// Resolve an app_id (case-insensitive) to its category.
     pub fn categorize(&self, app_id: &str) -> Category {
         self.map

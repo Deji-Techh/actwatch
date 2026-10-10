@@ -4,7 +4,7 @@ use rusqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub use crate::core_shim::{Categories, Category, DisplayNames};
+pub use actwatch_core::{Categories, Category, DisplayNames};
 
 #[derive(Debug, Clone)]
 pub struct AppUsageRow {
@@ -113,7 +113,7 @@ impl Database {
 
     pub fn fetch_dashboard_data(&self, selected_date: NaiveDate) -> Result<DashboardData> {
         let empty_chart = self.generate_empty_week_chart(selected_date);
-        let default_categories: Vec<CategoryTotal> = Category::ALL
+        let default_categories: Vec<CategoryTotal> = Category::all()
             .iter()
             .map(|&c| CategoryTotal {
                 category: c,
@@ -165,7 +165,7 @@ impl Database {
         }
 
         let mut category_breakdown = Vec::with_capacity(6);
-        for cat in Category::ALL {
+        for cat in Category::all() {
             let secs = *cat_map.get(&cat).unwrap_or(&0);
             let percentage = if total_usage_secs > 0 {
                 (secs as f64 / total_usage_secs as f64) * 100.0

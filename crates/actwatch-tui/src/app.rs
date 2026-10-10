@@ -204,8 +204,8 @@ impl App {
                 }
                 app.app_id.to_lowercase().contains(&query)
                     || app.display_name.to_lowercase().contains(&query)
-                    || app.category.name().to_lowercase().contains(&query)
-                    || app.category.short_name().to_lowercase().contains(&query)
+                    || crate::theme::name(app.category).to_lowercase().contains(&query)
+                    || crate::theme::short_name(app.category).to_lowercase().contains(&query)
             })
             .collect();
 

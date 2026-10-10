@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 mod app;
-pub mod core_shim;
 mod db;
+pub mod theme;
 mod ui;
 
 use app::App;

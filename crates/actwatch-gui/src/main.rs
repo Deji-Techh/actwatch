@@ -1,4 +1,5 @@
 use actwatch_core::Store;
+use actwatch_core::{Categories, Category, DisplayNames};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use iced::widget::canvas::{self, Canvas, Geometry, Stroke};
 use iced::widget::{
@@ -8,9 +9,6 @@ use iced::{
     Alignment, Color, Element, Length, Point, Rectangle, Size, Subscription, Task, Theme
 };
 use std::collections::HashMap;
-
-mod shim;
-use shim::{Categories, Category, DisplayNames};
 
 pub fn main() -> iced::Result {
     iced::application("ActWatch", ActWatch::update, ActWatch::view)
@@ -66,7 +64,7 @@ impl Default for ActWatch {
 
         let mut app = Self {
             store,
-            cats: Categories::new(),
+            cats: Categories::load(),
             names: DisplayNames::load(),
             current_date: Local::now().naive_local().date(),
             day_usage: Vec::new(),

@@ -56,6 +56,46 @@ resource columns only where they exist instead of showing stale or empty data.
 days follow the local timezone including DST. `day` in `daily_rollup` is
 `YYYY-MM-DD` text, which sorts lexicographically.
 
+### What the CLI adds on top of the raw rows (v2)
+
+- **Names and categories come from core, never from a local map.** The only
+  import surface is `crates/actwatch-cli/src/core_api.rs`: `DisplayNames`
+  (`.desktop` `Name=`, `[aliases]`, prettified app id), `Categories` (the six
+  v2 categories) and `TitlePolicy`. Renderers receive a `Catalog` and never
+  resolve a name themselves, so the CLI cannot drift from the TUI/GUI.
+- **Output is plain monochrome**: no ANSI escapes anywhere, asserted by a
+  test over the table, CSV, JSON and `status` renderers.
+- **App-level only.** No window title is ever rendered; `status` reports the
+  daemon's `[privacy] titles` policy so the value on disk is never a mystery.
+- **Away is its own row.** Rows recorded under the reserved `away` app id are
+  split out of the app list in `model.rs` and never counted in app totals:
+  `total_secs`, shares and app counts exclude them, and idle time appears as
+  an `Away` row / `is_away` row / `away_secs` field instead. A day with only
+  idle time still reports correctly.
+- **`--app` filters on the app id, then on the friendly name.** The SQL filter
+  is an escaped `LIKE '%needle%'` (metacharacters in an app id stay literal);
+  if it matches nothing, the range is re-filtered against display names, so
+  `--app "Visual Studio Code"` works.
+- **CSV/JSON changes are additive.** CSV keeps its original column order and
+  appends `name,category,is_away`; JSON keeps `totals.total_secs` meaning app
+  time and adds `away_secs`, plus `name`/`category`/`away` per row. The
+  caelestia hook, which reads `totals.total_secs`, is unaffected.
+
+### CLI v2 status
+
+`actwatch-core` on this branch still exposes the v1 API, so three contract
+items are stood in for by a thin shim in `crates/actwatch-cli/src/core_api.rs`
+(`mod shim`, every item marked `SHIM:`). The shim holds no policy of its own:
+`Categories` delegates to `actwatch_core::Categories` for the four categories
+core already models, and only fills in the two it cannot (Gaming, Media).
+
+| Shim item | Replaced by (core v2) | Notes |
+|---|---|---|
+| `shim::DisplayNames` | `core::names::DisplayNames` | desktop-file scan + `[aliases]` + prettify, `away` → `Away` |
+| `shim::Categories` (6) | `core::Categories` (6) | v1 `Category` has four variants |
+| `shim::TitlePolicy` | `core::TitlePolicy` | CLI only reads the value for `status`; `redact` is daemon-side |
+| `sql::ROLLUP_TOTALS` / `EVENTS_TOTALS` | read-only rollup reader in core | `Store` opens read-write (`Connection::open`, `migrate()`), which a read-only frontend cannot use without dropping `query_only` |
+
 ## v2 contract (FROZEN — implement exactly, additive changes only)
 
 All frontends (daemon writer, TUI, GUI, CLI) use `actwatch-core` for names,

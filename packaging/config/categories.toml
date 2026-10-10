@@ -1,148 +1,62 @@
+# actwatch configuration — installed to ~/.config/actwatch/categories.toml
+#
+# Everything here is optional. `actwatch-core` ships builtins for names,
+# categories and titles, so this file only exists to override them:
+#
+#   [privacy] titles      what the daemon stores in app_events.title
+#   [aliases]             app id -> friendly name shown by every frontend
+#   [categories.<key>]    app id -> which of the six categories it belongs to
+#
+# App ids are the Hyprland `class` / window app id, matched case-insensitively.
+# Unmatched apps fall back to a `.desktop` file name and then to the app id
+# itself, and to the `other` category.
+
 version = 2
-default_category = "utilities"
 
-[[category]]
-id = "social"
-name = "Social"
-color = "#7c5cff"
-order = 1
-patterns = [
-  "firefox",
-  "chromium",
-  "chrome",
-  "brave",
-  "zen",
-  "discord",
-  "telegram",
-  "signal",
-  "element",
-  "slack",
-  "spotify",
-  "reddit",
-  "instagram",
-  "twitter",
-  "tiktok",
-  "whatsapp",
-  "wechat",
-  "zoom",
-  "twitch",
-  "mastodon",
-  "vkontakte",
-  "qutebrowser",
-]
+# ---------------------------------------------------------------------------
+# Window titles
+# ---------------------------------------------------------------------------
+# off  — nothing is stored (default, and the only privacy-safe choice)
+# hash — a short non-reversible hash is stored instead of the text
+# full — the title is stored verbatim
+# No frontend renders titles either way; the CLI, TUI and GUI are app-level.
+[privacy]
+titles = "off"
 
-[[category]]
-id = "productivity"
-name = "Productivity"
-color = "#22c55e"
-order = 2
-patterns = [
-  "code",
-  "code-oss",
-  "vscodium",
-  "nvim",
-  "neovim",
-  "vim",
-  "emacs",
-  "zed",
-  "sublime",
-  "jetbrains",
-  "idea",
-  "pycharm",
-  "webstorm",
-  "obsidian",
-  "notion",
-  "logseq",
-  "joplin",
-  "zathura",
-  "okular",
-  "libreoffice",
-  "onlyoffice",
-  "wps",
-  "anki",
-  "obs",
-]
+# ---------------------------------------------------------------------------
+# Friendly names
+# ---------------------------------------------------------------------------
+# Keys are app ids, values are what you want to read. These win over the
+# `.desktop` `Name=` field, which wins over a prettified app id.
+# Quote an app id that contains dots: an unquoted `a.b = "x"` is read by TOML
+# as a nested table.
+[aliases]
+t3code = "T3 Code"
+"org.gnome.Nautilus" = "Files"
+"io.github.spacingbat3.webcord" = "WebCord"
 
-[[category]]
-id = "utilities"
-name = "Utilities"
-color = "#f59e0b"
-order = 3
-patterns = [
-  "alacritty",
-  "kitty",
-  "foot",
-  "wezterm",
-  "ghostty",
-  "konsole",
-  "gnome-terminal",
-  "terminator",
-  "tmux",
-  "warp",
-  "thunar",
-  "nautilus",
-  "dolphin",
-  "ranger",
-  "yazi",
-  "lf",
-  "kdeconnect",
-  "blueman",
-  "pavucontrol",
-  "nm-connection-editor",
-  "gimp",
-  "inkscape",
-  "blender",
-  "kdenlive",
-  "qbittorrent",
-  "transmission",
-  "keepassxc",
-  "bitwarden",
-  "1password",
-  "password-secret-service",
-]
+# ---------------------------------------------------------------------------
+# Categories
+# ---------------------------------------------------------------------------
+# The six categories are fixed: Social, Productivity & Finance, Utilities,
+# Gaming, Media, Other. Add an app here to move it out of its builtin bucket.
 
-[[category]]
-id = "finance"
-name = "Finance"
-color = "#38bdf8"
-order = 4
-patterns = [
-  "gnucash",
-  "ledger",
-  "kmymoney",
-  "homebank",
-  "fio",
-  "stocker",
-  "investing",
-  "tradingview",
-  "binance",
-  "coinbase",
-  "metamask",
-  "trustwallet",
-  "phantom",
-  "exodus",
-  "electrum",
-  "bitcoin-core",
-]
+[categories.social]
+apps = ["discord", "fractal", "qutebrowser"]
 
-[[category]]
-id = "terminal"
-name = "Terminal & Tiling"
-color = "#a78bfa"
-order = 5
-patterns = [
-  "hyprland",
-  "sway",
-  "waybar",
-  "wofi",
-  "anyrun",
-  "dmenu",
-  "rofi",
-  "fuzzel",
-  "mako",
-  "grim",
-  "slurp",
-  "swappy",
-  "wlr-randr",
-  "hyprpaper",
-]
+[categories.productivity_finance]
+apps = ["gnucash", "kmymoney", "zathura"]
+
+[categories.utilities]
+apps = ["nm-connection-editor", "pavucontrol", "wofi"]
+
+[categories.gaming]
+apps = ["bottles", "heroic", "lutris", "steam"]
+
+[categories.media]
+apps = ["celluloid", "haruna", "mpv", "obs", "spotify", "vlc"]
+
+[categories.other]
+# The fallback bucket. Listing apps here is only useful to pin something that
+# would otherwise land in a different builtin category.
+apps = ["caelestia-dash", "org.gnome.Idle"]

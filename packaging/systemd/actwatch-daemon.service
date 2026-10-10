@@ -18,8 +18,11 @@ Restart=always
 RestartSec=5s
 
 # Force the database location to match the CLI's default, independent of what
-# the user manager happened to inherit.
+# the user manager happened to inherit. XDG_CONFIG_HOME is pinned for the same
+# reason: ~/.config/actwatch/categories.toml holds the names, categories and
+# title policy that the daemon and every frontend must agree on.
 Environment=XDG_DATA_HOME=%h/.local/share
+Environment=XDG_CONFIG_HOME=%h/.config
 # HYPRLAND_INSTANCE_SIGNATURE is deliberately not hardcoded: its value is
 # random per session, so the daemon discovers the socket under
 # $XDG_RUNTIME_DIR/hypr/ and falls back to polling `hyprctl clients -j`.

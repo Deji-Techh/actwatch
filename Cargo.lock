@@ -75,12 +75,15 @@ dependencies = [
 name = "actwatch-tui"
 version = "0.1.0"
 dependencies = [
+ "actwatch-core",
  "anyhow",
  "chrono",
  "crossterm",
  "ratatui",
  "rusqlite",
  "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

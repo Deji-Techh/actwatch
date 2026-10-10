@@ -1,4 +1,5 @@
 /target/
+packaging/dist/
 *.db
 *.db-wal
 *.db-shm

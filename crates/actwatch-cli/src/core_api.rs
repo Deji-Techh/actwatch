@@ -36,8 +36,8 @@ impl Catalog {
     }
 
     /// Builds a catalog from TOML text without touching the filesystem
-    /// (no `.desktop` scan). Used by [`Catalog::load`]-independent callers
-    /// and by the tests.
+    /// (no `.desktop` scan). Test seam: production goes through [`Catalog::load`].
+    #[cfg(test)]
     pub fn from_toml_str(text: &str) -> Self {
         let mut names = DisplayNames::default();
         let _ = names.apply_toml_str(text);

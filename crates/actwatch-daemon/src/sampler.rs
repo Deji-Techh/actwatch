@@ -32,13 +32,20 @@ impl ResourceSampler {
     pub fn sample(&mut self, app_id: &str, pid: Option<u32>) -> ResourceSample {
         let now = Instant::now();
         let now_ts = chrono::Utc::now().timestamp();
-        let gpu_pct = self.gpu_sampler.sample(now);
 
         let (target_pid, cpu_pct, rss_kb) = if let Some(p) = pid.filter(|&p| p > 0) {
             let (cpu, rss) = self.sample_process(p, now);
             (p as i64, cpu, rss as i64)
         } else {
             (0, 0.0, 0)
+        };
+
+        // Per-PID GPU time from fdinfo when we have a process, otherwise the
+        // system-wide sysfs fallback (an approximation, attributed as-is).
+        let gpu_pct = if target_pid > 0 {
+            self.gpu_sampler.sample_pid(target_pid as u32, now)
+        } else {
+            self.gpu_sampler.sample(now)
         };
 
         // Garbage collect old tracked PIDs if the map exceeds 32 entries
@@ -128,6 +135,8 @@ pub struct IntelGpuSampler {
     last_scan: Instant,
     prev_busy_ns: Option<u64>,
     prev_time: Instant,
+    /// Per-PID cumulative DRM engine time (fdinfo), for true per-app GPU %.
+    prev_pid_ns: HashMap<u32, (u64, Instant)>,
 }
 
 impl IntelGpuSampler {
@@ -138,6 +147,7 @@ impl IntelGpuSampler {
             last_scan: now,
             prev_busy_ns: None,
             prev_time: now,
+            prev_pid_ns: HashMap::new(),
         };
         sampler.rescan_engines();
         sampler
@@ -221,6 +231,74 @@ impl IntelGpuSampler {
 
         gpu_pct
     }
+
+    /// Per-process GPU % from `/proc/<pid>/fdinfo` `drm-engine-*: N ns`
+    /// counters (cumulative nanoseconds per engine context). Works without
+    /// privileges for same-uid processes and needs no sysfs `busy_time`
+    /// files, which newer i915 kernels no longer expose. Returns 0.0 on the
+    /// first sighting of a PID (no delta yet) or when the process is gone.
+    pub fn sample_pid(&mut self, pid: u32, now: Instant) -> f64 {
+        let total_ns = match Self::read_fdinfo_engine_ns(pid) {
+            Some(ns) => ns,
+            None => {
+                self.prev_pid_ns.remove(&pid);
+                return 0.0;
+            }
+        };
+
+        // Bound the table like the CPU tracker does.
+        if self.prev_pid_ns.len() > 32 {
+            self.prev_pid_ns.retain(|&k, (_, seen)| {
+                k == pid || now.duration_since(*seen).as_secs() < 60
+            });
+        }
+
+        let pct = match self.prev_pid_ns.insert(pid, (total_ns, now)) {
+            Some((prev_ns, prev_time)) => {
+                let elapsed_ns = now.duration_since(prev_time).as_nanos() as u64;
+                if elapsed_ns > 10_000_000 {
+                    let delta = total_ns.saturating_sub(prev_ns);
+                    (delta as f64 / elapsed_ns as f64 * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                }
+            }
+            None => 0.0,
+        };
+        pct
+    }
+
+    /// Sum of all `drm-engine-*: N ns` counters across a process's fds.
+    fn read_fdinfo_engine_ns(pid: u32) -> Option<u64> {
+        let dir = fs::read_dir(format!("/proc/{pid}/fdinfo")).ok()?;
+        let mut total: u64 = 0;
+        let mut found = false;
+        for entry in dir.flatten() {
+            let Ok(content) = fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            for line in content.lines() {
+                let line = line.trim();
+                let Some(rest) = line.strip_prefix("drm-engine-") else {
+                    continue;
+                };
+                // Shape: `<engine>:\t<ns> ns`
+                let Some((_, value)) = rest.split_once(':') else {
+                    continue;
+                };
+                let ns: u64 = value
+                    .trim()
+                    .strip_suffix("ns")
+                    .unwrap_or("")
+                    .trim()
+                    .parse()
+                    .unwrap_or(0);
+                total = total.saturating_add(ns);
+                found = true;
+            }
+        }
+        found.then_some(total)
+    }
 }
 
 #[cfg(test)]
@@ -240,8 +318,19 @@ mod tests {
     }
 
     #[test]
-    fn test_sample_cycle() {
+    fn test_fdinfo_gpu_first_sighting_is_zero_then_tracks() {
         let mut sampler = ResourceSampler::new();
+        let my_pid = std::process::id();
+        // First sighting establishes the baseline: 0.0, never NaN/negative.
+        let first = sampler.gpu_sampler.sample_pid(my_pid, Instant::now());
+        assert!(first >= 0.0 && first <= 100.0);
+        // Gone PID yields 0.0 without panicking (u32::MAX never exists).
+        let gone = sampler.gpu_sampler.sample_pid(u32::MAX, Instant::now());
+        assert_eq!(gone, 0.0);
+    }
+
+    #[test]
+    fn test_sample_cycle() {        let mut sampler = ResourceSampler::new();
         let my_pid = std::process::id();
 
         let sample1 = sampler.sample("test_self", Some(my_pid));

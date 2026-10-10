@@ -1,3 +1,4 @@
+use crate::away::is_lockscreen_class;
 use crate::models::ActiveWindowInfo;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,7 +22,7 @@ impl HyprlandManager {
         }
     }
 
-    fn locate_sockets() -> (Option<PathBuf>, Option<PathBuf>) {
+    pub fn locate_sockets() -> (Option<PathBuf>, Option<PathBuf>) {
         let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
             let uid = unsafe { libc::getuid() };
             format!("/run/user/{uid}")
@@ -131,10 +132,10 @@ impl HyprlandManager {
             }
         }
 
-        ActiveWindowInfo::idle()
+        ActiveWindowInfo::away()
     }
 
-    fn parse_window_json(val: &serde_json::Value) -> Option<ActiveWindowInfo> {
+    pub fn parse_window_json(val: &serde_json::Value) -> Option<ActiveWindowInfo> {
         let class = val
             .get("class")
             .and_then(|v| v.as_str())
@@ -150,24 +151,15 @@ impl HyprlandManager {
         let pid = val.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32);
 
         // Check if idle or screen locked
-        if class.is_empty() || pid.is_none() || pid == Some(0) {
-            return Some(ActiveWindowInfo::idle());
+        if class.is_empty() || pid.is_none() || pid == Some(0) || is_lockscreen_class(class) {
+            return Some(ActiveWindowInfo::away());
         }
 
-        let is_locked = matches!(
-            class.to_lowercase().as_str(),
-            "hyprlock" | "swaylock" | "waylock" | "lockscreen" | "gtklock"
-        );
-
-        if is_locked {
-            Some(ActiveWindowInfo::idle())
-        } else {
-            Some(ActiveWindowInfo {
-                app_id: class.to_string(),
-                title: title.to_string(),
-                pid,
-            })
-        }
+        Some(ActiveWindowInfo {
+            app_id: class.to_string(),
+            title: title.to_string(),
+            pid,
+        })
     }
 
     /// Run tracking loop: event-driven via socket2.sock with automatic 2s poll fallback.
@@ -205,7 +197,7 @@ impl HyprlandManager {
                         if line.starts_with("activewindow>>") {
                             let data = &line["activewindow>>".len()..];
                             let win = if data.trim().is_empty() || data.trim() == "," {
-                                ActiveWindowInfo::idle()
+                                ActiveWindowInfo::away()
                             } else {
                                 self.query_active_window().await
                             };
@@ -214,7 +206,7 @@ impl HyprlandManager {
                             }
                         } else if line.starts_with("lock>>") {
                             debug!("Received lock event from Hyprland");
-                            if tx.send(ActiveWindowInfo::idle()).await.is_err() {
+                            if tx.send(ActiveWindowInfo::away()).await.is_err() {
                                 return;
                             }
                         } else if line.starts_with("unlock>>") {
@@ -273,5 +265,53 @@ impl HyprlandManager {
                 }
             }
         }
+    }
+}
+
+pub async fn query_active_window_oneshot() -> ActiveWindowInfo {
+    let mut mgr = HyprlandManager::new();
+    mgr.query_active_window().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_window_json_regular() {
+        let val = serde_json::json!({
+            "class": "firefox",
+            "title": "Rust Programming",
+            "pid": 4567
+        });
+        let info = HyprlandManager::parse_window_json(&val).unwrap();
+        assert_eq!(info.app_id, "firefox");
+        assert_eq!(info.title, "Rust Programming");
+        assert_eq!(info.pid, Some(4567));
+        assert!(!info.is_away());
+    }
+
+    #[test]
+    fn test_parse_window_json_lockscreen() {
+        let val = serde_json::json!({
+            "class": "hyprlock",
+            "title": "",
+            "pid": 8888
+        });
+        let info = HyprlandManager::parse_window_json(&val).unwrap();
+        assert_eq!(info.app_id, "away");
+        assert!(info.is_away());
+    }
+
+    #[test]
+    fn test_parse_window_json_empty() {
+        let val = serde_json::json!({
+            "class": "",
+            "title": "",
+            "pid": 0
+        });
+        let info = HyprlandManager::parse_window_json(&val).unwrap();
+        assert_eq!(info.app_id, "away");
+        assert!(info.is_away());
     }
 }

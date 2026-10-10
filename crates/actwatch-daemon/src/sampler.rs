@@ -36,15 +36,16 @@ impl ResourceSampler {
 
         let (target_pid, cpu_pct, rss_kb) = if let Some(p) = pid.filter(|&p| p > 0) {
             let (cpu, rss) = self.sample_process(p, now);
-            (p, cpu, rss)
+            (p as i64, cpu, rss as i64)
         } else {
             (0, 0.0, 0)
         };
 
         // Garbage collect old tracked PIDs if the map exceeds 32 entries
         if self.pid_ticks.len() > 32 {
+            let current_target = target_pid as u32;
             self.pid_ticks.retain(|&k, (_, seen)| {
-                k == target_pid || now.duration_since(*seen).as_secs() < 60
+                k == current_target || now.duration_since(*seen).as_secs() < 60
             });
         }
 
@@ -232,7 +233,6 @@ mod tests {
         let my_pid = std::process::id();
 
         let ticks = sampler.read_proc_cpu(my_pid).expect("read cpu ticks for self");
-        // ticks read successfully
         let _ = ticks;
 
         let rss = sampler.read_proc_rss(my_pid).expect("read rss for self");
@@ -246,11 +246,11 @@ mod tests {
 
         let sample1 = sampler.sample("test_self", Some(my_pid));
         assert_eq!(sample1.app_id, "test_self");
-        assert_eq!(sample1.pid, my_pid);
+        assert_eq!(sample1.pid, my_pid as i64);
         assert!(sample1.rss_kb > 0);
 
-        let idle_sample = sampler.sample("idle", None);
-        assert_eq!(idle_sample.app_id, "idle");
+        let idle_sample = sampler.sample("away", None);
+        assert_eq!(idle_sample.app_id, "away");
         assert_eq!(idle_sample.pid, 0);
         assert_eq!(idle_sample.cpu_pct, 0.0);
         assert_eq!(idle_sample.rss_kb, 0);

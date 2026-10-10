@@ -6,6 +6,8 @@ pub struct Config {
     pub db_path: PathBuf,
 }
 
+pub type Args = Config;
+
 impl Config {
     pub fn parse() -> Result<Self, String> {
         let mut foreground = false;

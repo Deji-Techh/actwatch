@@ -10,6 +10,26 @@ use iced::{
 };
 use std::collections::HashMap;
 
+/// Monochrome nav-button style (surface bg, hairline border, near-white text).
+fn mono_button(_theme: &Theme, _status: iced::widget::button::Status) -> iced::widget::button::Style {
+    iced::widget::button::Style {
+        background: Some(Color::from_rgb8(0x26, 0x26, 0x28).into()),
+        text_color: Color::from_rgb8(0xF4, 0xF4, 0xF5),
+        border: iced::Border {
+            radius: 6.0.into(),
+            width: 1.0,
+            color: Color::from_rgb8(0x3A, 0x3A, 0x3E),
+        },
+        ..iced::widget::button::Style::default()
+    }
+}
+
+/// Legacy v1 daemon recorded idle spans as `"idle"`; v2 uses `"away"`.
+/// Both are excluded from app totals and shown in the Away card.
+fn is_away(app_id: &str) -> bool {
+    app_id == "away" || app_id == "idle"
+}
+
 pub fn main() -> iced::Result {
     iced::application("ActWatch", ActWatch::update, ActWatch::view)
         .theme(|_| Theme::Dark)
@@ -94,7 +114,7 @@ impl ActWatch {
 
         if let Ok(rows) = self.store.read_rollup(&day_str) {
             for r in rows {
-                if r.app_id == "away" {
+                if is_away(&r.app_id) {
                     self.away_secs += r.secs;
                 } else {
                     self.day_usage.push(AppUsage {
@@ -121,7 +141,7 @@ impl ActWatch {
 
             if let Ok(rows) = self.store.read_rollup(&d_str) {
                 for r in rows {
-                    if r.app_id == "away" {
+                    if is_away(&r.app_id) {
                         away_secs += r.secs;
                     } else {
                         let cat = self.cats.categorize(&r.app_id);
@@ -174,7 +194,7 @@ impl ActWatch {
 
         let prev_week_date = self.current_date - Duration::days(7);
         let prev_week_str = prev_week_date.format("%Y-%m-%d").to_string();
-        let prev_week_secs: i64 = self.store.read_rollup(&prev_week_str).unwrap_or_default().iter().filter(|r| r.app_id != "away").map(|r| r.secs).sum();
+        let prev_week_secs: i64 = self.store.read_rollup(&prev_week_str).unwrap_or_default().iter().filter(|r| !is_away(&r.app_id)).map(|r| r.secs).sum();
         
         let delta_pct = if prev_week_secs == 0 {
             if total_secs > 0 { "∞% from last week".to_string() } else { "0% from last week".to_string() }
@@ -196,14 +216,14 @@ impl ActWatch {
                 Some(self.period.clone()),
                 Message::PeriodSelected
             ),
-            button("<").on_press(Message::DatePrev),
+            button("<").style(mono_button).on_press(Message::DatePrev),
             text(if self.current_date == Local::now().naive_local().date() {
                 "Today".to_string()
             } else {
                 self.current_date.format("%a, %b %d").to_string()
             })
             .size(16).color(COLOR_TEXT),
-            button(">").on_press(Message::DateNext),
+            button(">").style(mono_button).on_press(Message::DateNext),
             text(delta_pct).size(14).color(COLOR_MUTED)
         ]
         .spacing(15)

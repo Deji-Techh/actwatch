@@ -1,12 +1,17 @@
-use crate::models::{AppEvent, ResourceSample};
+use crate::core_shim::{
+    model::{AppEvent, ResourceSample},
+    StoreV2Ext,
+};
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 pub struct Store {
-    conn: Connection,
-    _path: PathBuf,
+    core: actwatch_core::Store,
+    #[allow(dead_code)]
+    path: PathBuf,
     pending_events: Vec<AppEvent>,
     pending_samples: Vec<ResourceSample>,
 }
@@ -14,70 +19,38 @@ pub struct Store {
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create DB directory: {}", parent.display()))?;
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create DB directory: {}", parent.display()))?;
+            }
         }
 
-        let conn = Connection::open(path)
-            .with_context(|| format!("Failed to open SQLite database at {}", path.display()))?;
+        // 4. DB file 0600 on create + chmod existing on open
+        if path.exists() {
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms)
+                .with_context(|| format!("Failed to chmod 0600 on existing DB: {}", path.display()))?;
+        } else {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(path)
+                .with_context(|| format!("Failed to create DB file 0600 at: {}", path.display()))?;
+        }
 
-        // Lock tolerance & WAL mode per architecture spec
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
-             PRAGMA busy_timeout = 5000;",
-        )?;
+        let core = actwatch_core::Store::open_or_create(path)
+            .with_context(|| format!("Failed to open actwatch_core store at: {}", path.display()))?;
 
-        // Initialize schema per docs/ARCHITECTURE.md
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS app_events (
-                ts INTEGER,
-                app_id TEXT,
-                title TEXT,
-                dur_secs INTEGER
-            );
+        // Re-affirm permissions on the created/opened db file
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
 
-            CREATE TABLE IF NOT EXISTS resource_samples (
-                ts INTEGER,
-                app_id TEXT,
-                pid INTEGER,
-                cpu_pct REAL,
-                rss_kb INTEGER,
-                gpu_pct REAL
-            );
-
-            CREATE TABLE IF NOT EXISTS daily_rollup (
-                day TEXT,
-                app_id TEXT,
-                secs INTEGER,
-                avg_cpu REAL,
-                peak_rss_kb INTEGER,
-                avg_gpu REAL,
-                PRIMARY KEY (day, app_id)
-            );
-
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_app_events_ts ON app_events(ts);
-            CREATE INDEX IF NOT EXISTS idx_app_events_app_id ON app_events(app_id);
-            CREATE INDEX IF NOT EXISTS idx_resource_samples_ts ON resource_samples(ts);
-            CREATE INDEX IF NOT EXISTS idx_resource_samples_app_id ON resource_samples(app_id);
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_rollup_pk ON daily_rollup(day, app_id);",
-        )?;
-
-        conn.execute(
-            "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')",
-            [],
-        )?;
-
-        info!(path = %path.display(), "SQLite store opened with WAL mode");
+        info!(path = %path.display(), "Store opened as a thin buffer around core::Store");
 
         Ok(Self {
-            conn,
-            _path: path.to_path_buf(),
+            core,
+            path: path.to_path_buf(),
             pending_events: Vec::new(),
             pending_samples: Vec::new(),
         })
@@ -96,7 +69,7 @@ impl Store {
         (self.pending_events.len(), self.pending_samples.len())
     }
 
-    pub fn flush(&mut self) -> Result<()> {
+    pub fn flush(&mut self, current_day: &str) -> Result<()> {
         if self.pending_events.is_empty() && self.pending_samples.is_empty() {
             return Ok(());
         }
@@ -104,104 +77,46 @@ impl Store {
         let num_events = self.pending_events.len();
         let num_samples = self.pending_samples.len();
 
-        let tx = match self.conn.transaction() {
-            Ok(tx) => tx,
-            Err(e) => {
-                warn!(error = %e, "Could not start transaction for SQLite batch write (locked?); retrying next tick");
-                return Err(e.into());
-            }
-        };
-
-        // 1. Insert app_events
-        {
-            let mut stmt = tx.prepare_cached(
-                "INSERT INTO app_events (ts, app_id, title, dur_secs) VALUES (?1, ?2, ?3, ?4)",
-            )?;
-            for event in &self.pending_events {
-                stmt.execute(params![
-                    event.ts,
-                    event.app_id,
-                    event.title,
-                    event.dur_secs
-                ])?;
-            }
-        }
-
-        // 2. Insert resource_samples
-        {
-            let mut stmt = tx.prepare_cached(
-                "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, gpu_pct) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            )?;
-            for sample in &self.pending_samples {
-                stmt.execute(params![
-                    sample.ts,
-                    sample.app_id,
-                    sample.pid,
-                    sample.cpu_pct,
-                    sample.rss_kb,
-                    sample.gpu_pct
-                ])?;
-            }
-        }
-
-        // 3. Update daily_rollup incrementally
-        {
-            let mut rollup_dur_stmt = tx.prepare_cached(
-                "INSERT INTO daily_rollup (day, app_id, secs, avg_cpu, peak_rss_kb, avg_gpu)
-                 VALUES (?1, ?2, ?3, 0.0, 0, 0.0)
-                 ON CONFLICT(day, app_id) DO UPDATE SET
-                     secs = secs + excluded.secs",
-            )?;
-
-            for event in &self.pending_events {
-                let day = chrono::DateTime::from_timestamp(event.ts, 0)
-                    .map(|dt| dt.naive_local().date().to_string())
-                    .unwrap_or_else(|| "1970-01-01".to_string());
-
-                rollup_dur_stmt.execute(params![day, event.app_id, event.dur_secs])?;
-            }
-
-            let mut rollup_sample_stmt = tx.prepare_cached(
-                "INSERT INTO daily_rollup (day, app_id, secs, avg_cpu, peak_rss_kb, avg_gpu)
-                 VALUES (?1, ?2, 0, ?3, ?4, ?5)
-                 ON CONFLICT(day, app_id) DO UPDATE SET
-                     peak_rss_kb = MAX(peak_rss_kb, excluded.peak_rss_kb)",
-            )?;
-
-            for sample in &self.pending_samples {
-                let day = chrono::DateTime::from_timestamp(sample.ts, 0)
-                    .map(|dt| dt.naive_local().date().to_string())
-                    .unwrap_or_else(|| "1970-01-01".to_string());
-
-                rollup_sample_stmt.execute(params![
-                    day,
-                    sample.app_id,
-                    sample.cpu_pct,
-                    sample.rss_kb,
-                    sample.gpu_pct
-                ])?;
-            }
-        }
-
-        match tx.commit() {
+        // 1. Commit pending batch atomically via core::Store
+        match self.core.record_batch(&self.pending_events, &self.pending_samples) {
             Ok(()) => {
                 debug!(
                     events = num_events,
                     samples = num_samples,
-                    "Committed batch into SQLite"
+                    "Committed batch into SQLite via core::Store"
                 );
                 self.pending_events.clear();
                 self.pending_samples.clear();
-                Ok(())
             }
             Err(e) => {
                 warn!(
                     error = %e,
-                    "Failed to commit SQLite batch; keeping buffered items for next flush"
+                    "Failed to commit batch to SQLite; keeping buffered items for next flush"
                 );
-                Err(e.into())
+                return Err(e);
             }
         }
+
+        // 2. Truthful rollup refresh for current day
+        if let Err(e) = self.core.refresh_day(current_day) {
+            warn!(
+                error = %e,
+                day = %current_day,
+                "Failed to refresh daily rollup for day"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn core(&self) -> &actwatch_core::Store {
+        &self.core
+    }
+
+    #[allow(dead_code)]
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -210,61 +125,86 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_store_open_and_flush() {
-        let temp_dir = tempfile_dir();
-        let db_path = temp_dir.join("test_activity.db");
+    fn test_store_permissions_on_create() {
+        let temp_dir = tempfile_dir("perm_create");
+        let db_path = temp_dir.join("activity.db");
 
-        let mut store = Store::open(&db_path).expect("open store");
+        let store = Store::open(&db_path).expect("open store");
+        drop(store);
 
-        store.push_event(AppEvent {
-            ts: 1700000000,
-            app_id: "test-app".to_string(),
-            title: "Test App".to_string(),
-            dur_secs: 42,
-        });
-
-        store.push_sample(ResourceSample {
-            ts: 1700000005,
-            app_id: "test-app".to_string(),
-            pid: 1234,
-            cpu_pct: 12.5,
-            rss_kb: 45000,
-            gpu_pct: 3.2,
-        });
-
-        store.flush().expect("flush store");
-
-        // Verify data in DB
-        let (event_count, sample_count): (i64, i64) = store
-            .conn
-            .query_row(
-                "SELECT (SELECT COUNT(*) FROM app_events), (SELECT COUNT(*) FROM resource_samples)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("query counts");
-
-        assert_eq!(event_count, 1);
-        assert_eq!(sample_count, 1);
-
-        // Verify daily_rollup
-        let (secs, peak_rss): (i64, i64) = store
-            .conn
-            .query_row(
-                "SELECT secs, peak_rss_kb FROM daily_rollup WHERE app_id = 'test-app'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("query rollup");
-
-        assert_eq!(secs, 42);
-        assert_eq!(peak_rss, 45000);
+        let meta = std::fs::metadata(&db_path).expect("metadata");
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "Created DB file must have 0600 permissions");
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 
-    fn tempfile_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("actwatch_test_{}", std::process::id()));
+    #[test]
+    fn test_store_chmod_existing_on_open() {
+        let temp_dir = tempfile_dir("perm_existing");
+        let db_path = temp_dir.join("activity.db");
+
+        // Pre-create file with 0644
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .mode(0o644)
+            .open(&db_path)
+            .expect("create dummy db");
+
+        let meta = std::fs::metadata(&db_path).expect("metadata");
+        assert_eq!(meta.permissions().mode() & 0o777, 0o644);
+
+        // Opening with Store::open must chmod 0600
+        let store = Store::open(&db_path).expect("open store");
+        drop(store);
+
+        let meta = std::fs::metadata(&db_path).expect("metadata");
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "Existing DB file must be chmod 0600 on open");
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_store_buffer_flush_and_refresh() {
+        let temp_dir = tempfile_dir("buffer_flush");
+        let db_path = temp_dir.join("activity.db");
+
+        let mut store = Store::open(&db_path).expect("open store");
+
+        // Today UTC: 2026-01-10
+        let ts = 1768046400; // 2026-01-10 12:00:00 UTC
+        let day = "2026-01-10";
+
+        store.push_event(AppEvent::new(ts, "code", Some("main.rs".into()), 120));
+        store.push_event(AppEvent::new(ts + 120, "away", None, 300));
+        store.push_sample(ResourceSample::new(ts + 10, "code", 100, 20.0, 80000, 5.0));
+
+        assert_eq!(store.pending_count(), (2, 1));
+
+        store.flush(day).expect("flush");
+
+        assert_eq!(store.pending_count(), (0, 0));
+
+        // Verify data via core store methods
+        let core = store.core();
+        assert_eq!(core.daily_total_secs(day).unwrap(), 420);
+
+        let rollups = core.read_rollup(day).unwrap();
+        assert_eq!(rollups.len(), 2);
+        let code_row = rollups.iter().find(|r| r.app_id == "code").unwrap();
+        assert_eq!(code_row.secs, 120);
+        assert_eq!(code_row.peak_rss_kb, 80000);
+
+        let away_row = rollups.iter().find(|r| r.app_id == "away").unwrap();
+        assert_eq!(away_row.secs, 300);
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    fn tempfile_dir(prefix: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("actwatch_test_{prefix}_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         dir
     }

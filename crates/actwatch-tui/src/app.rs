@@ -60,27 +60,26 @@ impl App {
 
         let data = match db.fetch_dashboard_data(selected_date) {
             Ok(d) => d,
-            Err(_e) => {
-                db.fetch_dashboard_data(selected_date).unwrap_or_else(|_| {
-                    DashboardData {
-                        selected_date,
-                        total_usage_secs: 0,
-                        wow_delta_pct: None,
-                        wow_prev_secs: 0,
-                        chart: crate::db::WeeklyChartData {
-                            start_date: selected_date,
-                            end_date: selected_date,
-                            days: Vec::new(),
-                            avg_daily_secs: 0,
-                            max_daily_secs: 0,
-                        },
-                        category_breakdown: Vec::new(),
-                        apps: Vec::new(),
-                        is_empty_db: true,
-                        db_path: db.path().to_path_buf(),
-                    }
-                })
-            }
+            Err(_e) => db.fetch_dashboard_data(selected_date).unwrap_or_else(|_| {
+                DashboardData {
+                    selected_date,
+                    total_usage_secs: 0,
+                    away_secs: 0,
+                    wow_delta_pct: None,
+                    chart: crate::db::WeeklyChartData {
+                        start_date: selected_date,
+                        end_date: selected_date,
+                        days: Vec::new(),
+                        avg_daily_secs: 0,
+                        max_daily_secs: 0,
+                    },
+                    category_breakdown: Vec::new(),
+                    apps: Vec::new(),
+                    is_empty_db: true,
+                    is_all_away: false,
+                    db_path: db.path().to_path_buf(),
+                }
+            }),
         };
 
         Ok(Self {
@@ -204,6 +203,7 @@ impl App {
                     return true;
                 }
                 app.app_id.to_lowercase().contains(&query)
+                    || app.display_name.to_lowercase().contains(&query)
                     || app.category.name().to_lowercase().contains(&query)
                     || app.category.short_name().to_lowercase().contains(&query)
             })
@@ -435,6 +435,7 @@ mod tests {
         app.data.apps = vec![
             AppUsageRow {
                 app_id: "discord".to_string(),
+                display_name: "Discord".to_string(),
                 category: Category::Social,
                 duration_secs: 3600,
                 avg_cpu: 2.0,
@@ -442,8 +443,9 @@ mod tests {
                 avg_gpu: 1.0,
             },
             AppUsageRow {
-                app_id: "code".to_string(),
-                category: Category::Productivity,
+                app_id: "com.t3tools.T3Code".to_string(),
+                display_name: "T3Code".to_string(),
+                category: Category::ProductivityFinance,
                 duration_secs: 7200,
                 avg_cpu: 8.5,
                 peak_rss_kb: 1200000,
@@ -451,6 +453,7 @@ mod tests {
             },
             AppUsageRow {
                 app_id: "htop".to_string(),
+                display_name: "Htop".to_string(),
                 category: Category::Utilities,
                 duration_secs: 300,
                 avg_cpu: 0.5,
@@ -459,17 +462,17 @@ mod tests {
             },
         ];
 
-        // Default sort: Time Descending -> code, discord, htop
+        // Default sort: Time Descending -> T3Code, Discord, Htop
         let sorted = app.get_filtered_and_sorted_apps();
         assert_eq!(sorted.len(), 3);
-        assert_eq!(sorted[0].app_id, "code");
+        assert_eq!(sorted[0].app_id, "com.t3tools.T3Code");
         assert_eq!(sorted[1].app_id, "discord");
         assert_eq!(sorted[2].app_id, "htop");
 
-        // Sort by CPU Descending -> code (8.5%), discord (2.0%), htop (0.5%)
+        // Sort by CPU Descending -> T3Code (8.5%), Discord (2.0%), Htop (0.5%)
         app.set_sort_mode(SortMode::Cpu);
         let sorted_cpu = app.get_filtered_and_sorted_apps();
-        assert_eq!(sorted_cpu[0].app_id, "code");
+        assert_eq!(sorted_cpu[0].app_id, "com.t3tools.T3Code");
         assert_eq!(sorted_cpu[1].app_id, "discord");
         assert_eq!(sorted_cpu[2].app_id, "htop");
 
@@ -478,13 +481,13 @@ mod tests {
         let sorted_cpu_asc = app.get_filtered_and_sorted_apps();
         assert_eq!(sorted_cpu_asc[0].app_id, "htop");
         assert_eq!(sorted_cpu_asc[1].app_id, "discord");
-        assert_eq!(sorted_cpu_asc[2].app_id, "code");
+        assert_eq!(sorted_cpu_asc[2].app_id, "com.t3tools.T3Code");
 
-        // Search filter
-        app.search_query = "disc".to_string();
+        // Search filter by display name
+        app.search_query = "T3".to_string();
         let filtered = app.get_filtered_and_sorted_apps();
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].app_id, "discord");
+        assert_eq!(filtered[0].display_name, "T3Code");
     }
 
     #[test]

@@ -1,147 +1,15 @@
 use anyhow::Result;
 use chrono::{Datelike, Duration, NaiveDate};
-use ratatui::style::Color;
 use rusqlite::{Connection, OpenFlags};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Category {
-    Social,
-    Productivity,
-    Utilities,
-    Other,
-}
-
-impl Category {
-    pub const ALL: [Category; 4] = [
-        Category::Social,
-        Category::Productivity,
-        Category::Utilities,
-        Category::Other,
-    ];
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Category::Social => "Social",
-            Category::Productivity => "Productivity & Finance",
-            Category::Utilities => "Utilities",
-            Category::Other => "Other",
-        }
-    }
-
-    pub fn short_name(&self) -> &'static str {
-        match self {
-            Category::Social => "Social",
-            Category::Productivity => "Productivity",
-            Category::Utilities => "Utilities",
-            Category::Other => "Other",
-        }
-    }
-
-    pub fn color(&self) -> Color {
-        match self {
-            Category::Social => Color::Rgb(56, 189, 248),       // Sky / Cyan
-            Category::Productivity => Color::Rgb(52, 211, 153), // Emerald / Green
-            Category::Utilities => Color::Rgb(251, 146, 60),    // Amber / Orange
-            Category::Other => Color::Rgb(156, 163, 175),       // Slate / Gray
-        }
-    }
-}
-
-pub fn classify_app(app_id: &str) -> Category {
-    let lower = app_id.to_lowercase();
-
-    if lower.contains("discord")
-        || lower.contains("telegram")
-        || lower.contains("slack")
-        || lower.contains("element")
-        || lower.contains("signal")
-        || lower.contains("matrix")
-        || lower.contains("twitter")
-        || lower.contains("reddit")
-        || lower.contains("bsky")
-        || lower.contains("mastodon")
-        || lower.contains("whatsapp")
-        || lower.contains("ferdium")
-        || lower.contains("webcord")
-        || lower.contains("vesktop")
-        || lower.contains("zoom")
-        || lower.contains("teams")
-        || lower.contains("messenger")
-        || lower.contains("skype")
-    {
-        return Category::Social;
-    }
-
-    if lower.contains("code")
-        || lower.contains("vscodium")
-        || lower.contains("nvim")
-        || lower.contains("vim")
-        || lower.contains("emacs")
-        || lower.contains("alacritty")
-        || lower.contains("kitty")
-        || lower.contains("foot")
-        || lower.contains("wezterm")
-        || lower.contains("ghostty")
-        || lower.contains("terminal")
-        || lower.contains("libreoffice")
-        || lower.contains("calc")
-        || lower.contains("writer")
-        || lower.contains("impress")
-        || lower.contains("obsidian")
-        || lower.contains("notion")
-        || lower.contains("cargo")
-        || lower.contains("rustc")
-        || lower.contains("git")
-        || lower.contains("intellij")
-        || lower.contains("clion")
-        || lower.contains("pycharm")
-        || lower.contains("gimp")
-        || lower.contains("blender")
-        || lower.contains("inkscape")
-        || lower.contains("thunderbird")
-        || lower.contains("firefox")
-        || lower.contains("chromium")
-        || lower.contains("chrome")
-        || lower.contains("brave")
-        || lower.contains("zen")
-        || lower.contains("postman")
-        || lower.contains("dbeaver")
-    {
-        return Category::Productivity;
-    }
-
-    if lower.contains("hyprland")
-        || lower.contains("waybar")
-        || lower.contains("rofi")
-        || lower.contains("wofi")
-        || lower.contains("nemo")
-        || lower.contains("thunar")
-        || lower.contains("dolphin")
-        || lower.contains("pavucontrol")
-        || lower.contains("btop")
-        || lower.contains("htop")
-        || lower.contains("settings")
-        || lower.contains("systemsettings")
-        || lower.contains("actwatch")
-        || lower.contains("dunst")
-        || lower.contains("mako")
-        || lower.contains("wlogout")
-        || lower.contains("filemanager")
-        || lower.contains("calculator")
-    {
-        return Category::Utilities;
-    }
-
-    Category::Other
-}
+pub use crate::core_shim::{Categories, Category, DisplayNames};
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct AppUsageRow {
     pub app_id: String,
+    pub display_name: String,
     pub category: Category,
     pub duration_secs: u64,
     pub avg_cpu: f64,
@@ -150,19 +18,20 @@ pub struct AppUsageRow {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct DaySummary {
     pub date: NaiveDate,
     pub day_name: &'static str, // "Sun", "Mon", ...
     pub total_secs: u64,
+    pub away_secs: u64,
     pub category_secs: HashMap<Category, u64>,
     pub is_selected: bool,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct WeeklyChartData {
+    #[allow(dead_code)]
     pub start_date: NaiveDate,
+    #[allow(dead_code)]
     pub end_date: NaiveDate,
     pub days: Vec<DaySummary>,
     pub avg_daily_secs: u64,
@@ -170,7 +39,6 @@ pub struct WeeklyChartData {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CategoryTotal {
     pub category: Category,
     pub total_secs: u64,
@@ -178,21 +46,25 @@ pub struct CategoryTotal {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct DashboardData {
+    #[allow(dead_code)]
     pub selected_date: NaiveDate,
     pub total_usage_secs: u64,
+    pub away_secs: u64,
     pub wow_delta_pct: Option<f64>,
-    pub wow_prev_secs: u64,
     pub chart: WeeklyChartData,
     pub category_breakdown: Vec<CategoryTotal>,
     pub apps: Vec<AppUsageRow>,
     pub is_empty_db: bool,
+    pub is_all_away: bool,
+    #[allow(dead_code)]
     pub db_path: PathBuf,
 }
 
 pub struct Database {
     path: PathBuf,
+    pub categories: Categories,
+    pub names: DisplayNames,
 }
 
 impl Database {
@@ -215,6 +87,8 @@ impl Database {
     pub fn new(path: Option<PathBuf>) -> Self {
         Self {
             path: path.unwrap_or_else(Self::default_path),
+            categories: Categories::load(),
+            names: DisplayNames::load(),
         }
     }
 
@@ -229,7 +103,10 @@ impl Database {
 
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         match Connection::open_with_flags(&self.path, flags) {
-            Ok(conn) => Ok(Some(conn)),
+            Ok(conn) => {
+                let _ = conn.execute_batch("PRAGMA query_only = ON;");
+                Ok(Some(conn))
+            }
             Err(_) => Ok(None),
         }
     }
@@ -251,12 +128,13 @@ impl Database {
             return Ok(DashboardData {
                 selected_date,
                 total_usage_secs: 0,
+                away_secs: 0,
                 wow_delta_pct: None,
-                wow_prev_secs: 0,
                 chart: empty_chart,
                 category_breakdown: default_categories,
                 apps: Vec::new(),
                 is_empty_db: true,
+                is_all_away: false,
                 db_path: self.path.clone(),
             });
         };
@@ -265,27 +143,28 @@ impl Database {
             return Ok(DashboardData {
                 selected_date,
                 total_usage_secs: 0,
+                away_secs: 0,
                 wow_delta_pct: None,
-                wow_prev_secs: 0,
                 chart: empty_chart,
                 category_breakdown: default_categories,
                 apps: Vec::new(),
                 is_empty_db: true,
+                is_all_away: false,
                 db_path: self.path.clone(),
             });
         }
 
-        // Fetch selected day apps
-        let apps = self.fetch_apps_for_day(&conn, selected_date)?;
+        // Fetch selected day apps & away duration
+        let (apps, away_secs) = self.fetch_apps_and_away_for_day(&conn, selected_date)?;
         let total_usage_secs: u64 = apps.iter().map(|a| a.duration_secs).sum();
 
-        // Fetch category breakdown for selected day
+        // Fetch category breakdown for selected day across 6 categories
         let mut cat_map: HashMap<Category, u64> = HashMap::new();
         for app in &apps {
             *cat_map.entry(app.category).or_insert(0) += app.duration_secs;
         }
 
-        let mut category_breakdown = Vec::new();
+        let mut category_breakdown = Vec::with_capacity(6);
         for cat in Category::ALL {
             let secs = *cat_map.get(&cat).unwrap_or(&0);
             let percentage = if total_usage_secs > 0 {
@@ -302,7 +181,7 @@ impl Database {
 
         // Fetch Week-over-Week previous week day total (same weekday 7 days ago)
         let prev_week_date = selected_date - Duration::days(7);
-        let prev_week_apps = self.fetch_apps_for_day(&conn, prev_week_date)?;
+        let (prev_week_apps, _) = self.fetch_apps_and_away_for_day(&conn, prev_week_date)?;
         let wow_prev_secs: u64 = prev_week_apps.iter().map(|a| a.duration_secs).sum();
 
         let wow_delta_pct = if wow_prev_secs > 0 {
@@ -316,17 +195,20 @@ impl Database {
         // Fetch 7-day chart (Sunday to Saturday of the selected week)
         let chart = self.fetch_weekly_chart(&conn, selected_date)?;
 
-        let has_any_data = total_usage_secs > 0 || chart.days.iter().any(|d| d.total_secs > 0);
+        let has_any_data = total_usage_secs > 0 || away_secs > 0 || chart.days.iter().any(|d| d.total_secs > 0 || d.away_secs > 0);
+        let is_empty = !has_any_data && self.is_db_completely_empty(&conn);
+        let is_all_away = total_usage_secs == 0 && away_secs > 0;
 
         Ok(DashboardData {
             selected_date,
             total_usage_secs,
+            away_secs,
             wow_delta_pct,
-            wow_prev_secs,
             chart,
             category_breakdown,
             apps,
-            is_empty_db: !has_any_data && self.is_db_completely_empty(&conn),
+            is_empty_db: is_empty,
+            is_all_away,
             db_path: self.path.clone(),
         })
     }
@@ -367,6 +249,7 @@ impl Database {
                 date: current_date,
                 day_name: day_names[i as usize],
                 total_secs: 0,
+                away_secs: 0,
                 category_secs: HashMap::new(),
                 is_selected: current_date == selected_date,
             });
@@ -381,7 +264,11 @@ impl Database {
         }
     }
 
-    fn fetch_apps_for_day(&self, conn: &Connection, date: NaiveDate) -> Result<Vec<AppUsageRow>> {
+    fn fetch_apps_and_away_for_day(
+        &self,
+        conn: &Connection,
+        date: NaiveDate,
+    ) -> Result<(Vec<AppUsageRow>, u64)> {
         let date_str = date.format("%Y-%m-%d").to_string();
 
         // 1. Try reading from daily_rollup
@@ -406,27 +293,33 @@ impl Database {
                 let peak_rss_kb: i64 = row.get(3).unwrap_or(0);
                 let avg_gpu: f64 = row.get(4).unwrap_or(0.0);
 
-                let category = classify_app(&app_id);
-
-                Ok(AppUsageRow {
-                    app_id,
-                    category,
-                    duration_secs: secs.max(0) as u64,
-                    avg_cpu,
-                    peak_rss_kb: peak_rss_kb.max(0) as u64,
-                    avg_gpu,
-                })
+                Ok((app_id, secs.max(0) as u64, avg_cpu, peak_rss_kb.max(0) as u64, avg_gpu))
             })?;
 
             let mut app_list = Vec::new();
-            for r in rows {
-                if let Ok(app) = r {
-                    app_list.push(app);
+            let mut away_secs: u64 = 0;
+
+            for r in rows.flatten() {
+                let (app_id, duration_secs, avg_cpu, peak_rss_kb, avg_gpu) = r;
+                if is_away_app(&app_id) {
+                    away_secs += duration_secs;
+                } else {
+                    let display_name = self.names.resolve(&app_id);
+                    let category = self.categories.categorize(&app_id);
+                    app_list.push(AppUsageRow {
+                        app_id,
+                        display_name,
+                        category,
+                        duration_secs,
+                        avg_cpu,
+                        peak_rss_kb,
+                        avg_gpu,
+                    });
                 }
             }
 
-            if !app_list.is_empty() {
-                return Ok(app_list);
+            if !app_list.is_empty() || away_secs > 0 {
+                return Ok((app_list, away_secs));
             }
         }
 
@@ -441,14 +334,14 @@ impl Database {
             .unwrap_or(false);
 
         if !has_events_table {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
 
         // Query app_events for duration
         let mut stmt = conn.prepare(
-            "SELECT app_id, SUM(dur_secs) FROM app_events 
-             WHERE (date(ts, 'unixepoch', 'localtime') = ?1 OR date(ts, 'unixepoch') = ?1)
-             GROUP BY app_id 
+            "SELECT app_id, SUM(dur_secs) FROM app_events \
+             WHERE (date(ts, 'unixepoch', 'localtime') = ?1 OR date(ts, 'unixepoch') = ?1)\
+             GROUP BY app_id \
              ORDER BY SUM(dur_secs) DESC",
         )?;
 
@@ -459,14 +352,13 @@ impl Database {
         })?;
 
         let mut app_durations: HashMap<String, u64> = HashMap::new();
-        for r in event_rows {
-            if let Ok((app, dur)) = r {
-                app_durations.insert(app, dur);
-            }
+        for r in event_rows.flatten() {
+            let (app, dur) = r;
+            app_durations.insert(app, dur);
         }
 
         if app_durations.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         }
 
         // Query resource_samples for metrics
@@ -482,8 +374,8 @@ impl Database {
 
         if has_resources_table {
             if let Ok(mut stmt_res) = conn.prepare(
-                "SELECT app_id, AVG(cpu_pct), MAX(rss_kb), AVG(gpu_pct) FROM resource_samples
-                 WHERE (date(ts, 'unixepoch', 'localtime') = ?1 OR date(ts, 'unixepoch') = ?1)
+                "SELECT app_id, AVG(cpu_pct), MAX(rss_kb), AVG(gpu_pct) FROM resource_samples\
+                 WHERE (date(ts, 'unixepoch', 'localtime') = ?1 OR date(ts, 'unixepoch') = ?1)\
                  GROUP BY app_id",
             ) {
                 let res_rows = stmt_res.query_map([&date_str], |row| {
@@ -495,32 +387,40 @@ impl Database {
                 });
 
                 if let Ok(iter) = res_rows {
-                    for r in iter {
-                        if let Ok((app, metrics)) = r {
-                            res_map.insert(app, metrics);
-                        }
+                    for r in iter.flatten() {
+                        let (app, metrics) = r;
+                        res_map.insert(app, metrics);
                     }
                 }
             }
         }
 
         let mut app_list = Vec::new();
+        let mut away_secs: u64 = 0;
+
         for (app_id, duration_secs) in app_durations {
-            let category = classify_app(&app_id);
-            let (avg_cpu, peak_rss_kb, avg_gpu) = res_map.get(&app_id).copied().unwrap_or((0.0, 0, 0.0));
-            app_list.push(AppUsageRow {
-                app_id,
-                category,
-                duration_secs,
-                avg_cpu,
-                peak_rss_kb,
-                avg_gpu,
-            });
+            if is_away_app(&app_id) {
+                away_secs += duration_secs;
+            } else {
+                let display_name = self.names.resolve(&app_id);
+                let category = self.categories.categorize(&app_id);
+                let (avg_cpu, peak_rss_kb, avg_gpu) =
+                    res_map.get(&app_id).copied().unwrap_or((0.0, 0, 0.0));
+                app_list.push(AppUsageRow {
+                    app_id,
+                    display_name,
+                    category,
+                    duration_secs,
+                    avg_cpu,
+                    peak_rss_kb,
+                    avg_gpu,
+                });
+            }
         }
 
         app_list.sort_by(|a, b| b.duration_secs.cmp(&a.duration_secs));
 
-        Ok(app_list)
+        Ok((app_list, away_secs))
     }
 
     fn fetch_weekly_chart(&self, conn: &Connection, selected_date: NaiveDate) -> Result<WeeklyChartData> {
@@ -535,7 +435,7 @@ impl Database {
 
         for i in 0..7 {
             let current_date = start_sun + Duration::days(i);
-            let apps = self.fetch_apps_for_day(conn, current_date)?;
+            let (apps, day_away) = self.fetch_apps_and_away_for_day(conn, current_date)?;
 
             let day_total: u64 = apps.iter().map(|a| a.duration_secs).sum();
             total_week_secs += day_total;
@@ -552,6 +452,7 @@ impl Database {
                 date: current_date,
                 day_name: day_names[i as usize],
                 total_secs: day_total,
+                away_secs: day_away,
                 category_secs,
                 is_selected: current_date == selected_date,
             });
@@ -569,43 +470,36 @@ impl Database {
     }
 }
 
+pub fn is_away_app(app_id: &str) -> bool {
+    let lower = app_id.trim().to_lowercase();
+    lower == "away" || lower == "idle" || lower == "lockscreen" || lower == "hyprlock" || lower == "swaylock"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
 
     #[test]
-    fn test_classify_app() {
-        assert_eq!(classify_app("discord"), Category::Social);
-        assert_eq!(classify_app("org.telegram.desktop"), Category::Social);
-        assert_eq!(classify_app("Slack"), Category::Social);
-        assert_eq!(classify_app("code"), Category::Productivity);
-        assert_eq!(classify_app("nvim"), Category::Productivity);
-        assert_eq!(classify_app("Alacritty"), Category::Productivity);
-        assert_eq!(classify_app("firefox"), Category::Productivity);
-        assert_eq!(classify_app("hyprland"), Category::Utilities);
-        assert_eq!(classify_app("waybar"), Category::Utilities);
-        assert_eq!(classify_app("pavucontrol"), Category::Utilities);
-        assert_eq!(classify_app("unknown_custom_app"), Category::Other);
-    }
-
-    #[test]
     fn test_empty_db_detection() {
-        let test_dir = std::env::temp_dir().join("actwatch_test_empty");
+        let test_dir = std::env::temp_dir().join("actwatch_test_empty_v2");
         let _ = fs::create_dir_all(&test_dir);
         let db_path = test_dir.join("nonexistent.db");
         let _ = fs::remove_file(&db_path);
 
-        let db = Database::new(Some(db_path));
+        let db = Database::new(Some(db_path.clone()));
         let data = db.fetch_dashboard_data(NaiveDate::from_ymd_opt(2026, 10, 10).unwrap()).unwrap();
         assert!(data.is_empty_db);
         assert_eq!(data.total_usage_secs, 0);
         assert_eq!(data.apps.len(), 0);
+        assert_eq!(data.category_breakdown.len(), 6);
+        assert_eq!(data.selected_date, NaiveDate::from_ymd_opt(2026, 10, 10).unwrap());
+        assert_eq!(data.db_path, db_path);
     }
 
     #[test]
-    fn test_fetch_from_daily_rollup() {
-        let test_dir = std::env::temp_dir().join("actwatch_test_rollup");
+    fn test_fetch_from_daily_rollup_and_away_exclusion() {
+        let test_dir = std::env::temp_dir().join("actwatch_test_rollup_v2");
         let _ = fs::create_dir_all(&test_dir);
         let db_path = test_dir.join("activity.db");
         let _ = fs::remove_file(&db_path);
@@ -625,7 +519,7 @@ mod tests {
 
         conn.execute(
             "INSERT INTO daily_rollup (day, app_id, secs, avg_cpu, peak_rss_kb, avg_gpu) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (&date_str, "org.wezfurlong.wezterm", 14400, 2.5, 120000, 0.5),
+            (&date_str, "com.example.super-app", 14400, 2.5, 120000, 0.5),
         ).unwrap();
 
         conn.execute(
@@ -633,16 +527,70 @@ mod tests {
             (&date_str, "discord", 7200, 4.1, 450000, 1.2),
         ).unwrap();
 
+        conn.execute(
+            "INSERT INTO daily_rollup (day, app_id, secs, avg_cpu, peak_rss_kb, avg_gpu) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (&date_str, "foot", 1800, 0.5, 30000, 0.0),
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO daily_rollup (day, app_id, secs, avg_cpu, peak_rss_kb, avg_gpu) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (&date_str, "away", 3600, 0.0, 0, 0.0),
+        ).unwrap();
+
         let db = Database::new(Some(db_path.clone()));
         let data = db.fetch_dashboard_data(date).unwrap();
 
         assert!(!data.is_empty_db);
-        assert_eq!(data.total_usage_secs, 14400 + 7200);
-        assert_eq!(data.apps.len(), 2);
-        assert_eq!(data.apps[0].app_id, "org.wezfurlong.wezterm");
-        assert_eq!(data.apps[0].category, Category::Productivity);
-        assert_eq!(data.apps[1].app_id, "discord");
-        assert_eq!(data.apps[1].category, Category::Social);
+        // Total usage excludes away
+        assert_eq!(data.total_usage_secs, 14400 + 7200 + 1800);
+        assert_eq!(data.away_secs, 3600);
+        assert_eq!(data.apps.len(), 3);
+
+        // Friendly name resolution
+        let super_app = data.apps.iter().find(|a| a.app_id == "com.example.super-app").unwrap();
+        assert_eq!(super_app.display_name, "Super App");
+
+        // Foot classification fixed via core builtins
+        let foot = data.apps.iter().find(|a| a.app_id == "foot").unwrap();
+        assert_eq!(foot.category, Category::Utilities);
+        assert_eq!(foot.display_name, "Foot");
+
+        assert_eq!(data.chart.start_date, NaiveDate::from_ymd_opt(2026, 10, 4).unwrap());
+        assert_eq!(data.chart.end_date, NaiveDate::from_ymd_opt(2026, 10, 10).unwrap());
+
+        let _ = fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_all_away_day() {
+        let test_dir = std::env::temp_dir().join("actwatch_test_away_day");
+        let _ = fs::create_dir_all(&test_dir);
+        let db_path = test_dir.join("activity.db");
+        let _ = fs::remove_file(&db_path);
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE daily_rollup(day TEXT, app_id TEXT, secs INTEGER, avg_cpu REAL, peak_rss_kb INTEGER, avg_gpu REAL);
+            ",
+        ).unwrap();
+
+        let date = NaiveDate::from_ymd_opt(2026, 10, 10).unwrap();
+        let date_str = date.format("%Y-%m-%d").to_string();
+
+        conn.execute(
+            "INSERT INTO daily_rollup (day, app_id, secs, avg_cpu, peak_rss_kb, avg_gpu) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (&date_str, "away", 28800, 0.0, 0, 0.0),
+        ).unwrap();
+
+        let db = Database::new(Some(db_path.clone()));
+        let data = db.fetch_dashboard_data(date).unwrap();
+
+        assert!(!data.is_empty_db);
+        assert!(data.is_all_away);
+        assert_eq!(data.total_usage_secs, 0);
+        assert_eq!(data.away_secs, 28800);
+        assert_eq!(data.apps.len(), 0);
 
         let _ = fs::remove_file(&db_path);
     }

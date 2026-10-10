@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 mod app;
+pub mod core_shim;
 mod db;
 mod ui;
 
@@ -52,7 +53,7 @@ fn parse_args() -> Result<Option<CliArgs>> {
                 }
             }
             "--help" | "-h" => {
-                println!("actwatch-tui — Terminal Activity Monitor");
+                println!("actwatch-tui — Terminal Activity Monitor (Monochrome B&W)");
                 println!();
                 println!("USAGE:");
                 println!("    actwatch-tui [OPTIONS]");
@@ -66,13 +67,15 @@ fn parse_args() -> Result<Option<CliArgs>> {
                 println!("    q, Ctrl+C            Quit application");
                 println!("    ← / →, h / l         Navigate previous / next day");
                 println!("    t                    Jump to Today");
-                println!("    [ / ]                Navigate previous / next week");
+                println!("    [ / ]                Navigate previous / next week (7 days)");
                 println!("    /                    Search / filter applications");
-                println!("    1, 2, 3, 4           Sort by Time / CPU / RAM / GPU");
+                println!("    Esc                  Clear filter or exit search");
+                println!("    1, 2, 3, 4           Sort by Time / Avg CPU / Peak RSS / Avg GPU");
                 println!("    s                    Cycle sort column");
                 println!("    r                    Force refresh from database");
-                println!("    ↑ / ↓, k / j         Scroll application table");
-                println!("    Esc                  Clear filter or exit search");
+                println!("    ↑ / ↓, k / j         Scroll application table (1 item)");
+                println!("    PageUp / PageDown    Scroll application table (10 items)");
+                println!("    Home / End, g / G    Scroll to first / last item");
                 return Ok(None);
             }
             _ => {

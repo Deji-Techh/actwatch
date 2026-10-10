@@ -31,11 +31,11 @@ Scope {
         command: root.command
         running: false
 
-        stdout: DataStreamParser {
-            onStreamFinished: (text) => root.ingest(text)
+        stdout: StdioCollector {
+            onStreamFinished: root.ingest(text)
         }
 
-        stderr: DataStreamParser {}
+        stderr: StdioCollector {}
 
         onExited: (exitCode, exitStatus) => {
             if (exitCode !== 0) {

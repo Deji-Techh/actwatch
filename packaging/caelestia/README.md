@@ -2,20 +2,47 @@
 
 Show today's total screen time in your bar without ever blocking the shell.
 
-Two options, both read-only:
+Three options, all read-only:
 
 | File | Use when | Blocks? |
 |---|---|---|
-| `ActwatchTotal.qml` | you run caelestia-shell and want a real bar item | no — async `Process` |
+| `actwatch-pill/` | **recommended on caelestia-shell 2.x**: standalone monochrome pill, update-proof | no — async `Process`, 60s timer |
+| `ActwatchTotal.qml` | you run a caelestia-shell fork with a custom bar slot | no — async `Process` |
 | `actwatch-total.sh` | you want a one-line string (polybar, waybar, hyprland module) | yes, ~10ms; use it on a timer |
 
-Both shell out to the same command:
+All three shell out to the same command:
 
 ```sh
 actwatch export --json --slim
 ```
 
-which defaults to **today** and prints a stable `totals.total_secs` field.
+which defaults to **today** and prints a stable `totals.total_secs` field
+(app time — Away is excluded, so the number is time actually at the PC).
+
+---
+
+## Option A — standalone pill (recommended)
+
+caelestia-shell 2.x has a fixed bar entry set with no custom-module slot, so
+injecting into its `Bar.qml` would break on every update. The pill sidesteps
+that: its own `qs -c actwatch-pill` config, one small `PanelWindow`, zero
+exclusive zone (it never moves your windows), monochrome to match actwatch.
+
+```sh
+mkdir -p ~/.config/quickshell/actwatch-pill
+cp packaging/caelestia/actwatch-pill/shell.qml ~/.config/quickshell/actwatch-pill/
+```
+
+Add it to your session (Hyprland `exec-once`, alongside the shell itself):
+
+```
+exec-once = qs -c actwatch-pill
+```
+
+Top-right pill shows `◷ 2h 14m`. Left-click opens `actwatch-tui` in foot,
+right-click forces a refresh. The first paint shows `—` until the CLI answers.
+
+Remove it with `pkill -f "qs -c actwatch-pill"` and deleting the directory.
 
 ---
 
@@ -48,8 +75,8 @@ qs -c caelestia ipc call shell reload
 
 ### Why it cannot block your shell
 
-- The CLI runs through Quickshell's `Process`, which is asynchronous. There is
-  no `$(...)`, no `StdioCollector` and no synchronous read anywhere.
+- The CLI runs through Quickshell's `Process` with an async `StdioCollector`.
+  There is no `$(...)` and no synchronous read anywhere.
 - The value updates on a 1-minute timer; the bar paints immediately on every
   frame regardless of whether the CLI has answered yet.
 - `root.ok` starts `false` and the label starts as `—`. If the CLI is missing,

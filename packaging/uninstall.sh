@@ -28,7 +28,7 @@ for arg in "$@"; do
   esac
 done
 
-for unit in actwatch-gui.service actwatch-daemon.service; do
+for unit in actwatch-gui.service actwatch-daemon.service actwatch-backup.timer; do
   if command -v systemctl >/dev/null 2>&1; then
     if systemctl --user is-active --quiet "$unit" 2>/dev/null; then
       log "stopping $unit"
@@ -47,10 +47,11 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 log "removing units"
-rm -fv "$UNITDIR/actwatch-daemon.service" "$UNITDIR/actwatch-gui.service"
+rm -fv "$UNITDIR/actwatch-daemon.service" "$UNITDIR/actwatch-gui.service" \
+  "$UNITDIR/actwatch-backup.service" "$UNITDIR/actwatch-backup.timer"
 
 log "removing binaries"
-for bin in actwatch actwatch-daemon actwatch-gui actwatch-gui-run actwatch-tui; do
+for bin in actwatch actwatch-daemon actwatch-gui actwatch-gui-run actwatch-tui actwatch-backup; do
   rm -fv "$BINDIR/$bin"
 done
 

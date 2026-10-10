@@ -1,0 +1,12 @@
+[Unit]
+Description=actwatch weekly database backup timer
+
+[Timer]
+# Weekly on top of a 2h random delay so boots never spike; Persistent catches
+# up a missed week on the next login (the machine is a laptop, not a server).
+OnCalendar=weekly
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

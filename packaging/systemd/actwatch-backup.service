@@ -1,0 +1,30 @@
+[Unit]
+Description=actwatch weekly database backup
+Documentation=file:%h/.local/share/doc/actwatch/README.md
+Wants=actwatch-daemon.service
+After=actwatch-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/actwatch-backup
+# A backup must never contend with the session: lowest priority, idle I/O.
+Nice=10
+IOSchedulingClass=idle
+# Hard ceiling; sqlite backup of even a multi-year DB stays far below this.
+MemoryMax=256M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# Live DB is read from here, timestamped copies are written to backups/.
+ReadWritePaths=%h/.local/share/actwatch
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+TimeoutStartSec=5min

@@ -51,8 +51,9 @@ for bin in actwatch actwatch-daemon actwatch-gui actwatch-tui; do
 done
 (( installed > 0 )) || die "found no binaries in $DIST"
 
-log "installing the GUI launcher"
+log "installing the GUI launcher and backup helper"
 install -Dm755 "$REPO_ROOT/packaging/run-gui.sh" "$BINDIR/actwatch-gui-run"
+install -Dm755 "$REPO_ROOT/packaging/actwatch-backup.sh" "$BINDIR/actwatch-backup"
 
 log "creating data directory $DATADIR"
 # The daemon unit runs with ProtectHome=read-only, so it cannot create this
@@ -82,7 +83,7 @@ fi
 
 log "installing systemd user units into $UNITDIR"
 mkdir -p "$UNITDIR"
-for unit in "$REPO_ROOT"/packaging/systemd/*.service; do
+for unit in "$REPO_ROOT"/packaging/systemd/*.service "$REPO_ROOT"/packaging/systemd/*.timer; do
   [[ -f "$unit" ]] || continue
   install -Dm644 "$unit" "$UNITDIR/$(basename "$unit")"
   log "  $(basename "$unit")"
@@ -98,6 +99,12 @@ if command -v systemctl >/dev/null 2>&1 && (( WITH_SERVICE )); then
     log "enabling actwatch-daemon.service (24/7 collector)"
     systemctl --user enable --now actwatch-daemon.service
   fi
+  if systemctl --user is-enabled --quiet actwatch-backup.timer 2>/dev/null; then
+    log "actwatch-backup.timer already enabled"
+  else
+    log "enabling actwatch-backup.timer (weekly DB backup)"
+    systemctl --user enable --now actwatch-backup.timer
+  fi
   log "status:"
   systemctl --user --no-pager status actwatch-daemon.service || true
 else
@@ -109,3 +116,4 @@ fi
 log "installed. try:"
 echo "  actwatch status"
 echo "  actwatch query --week"
+echo "  systemctl --user start actwatch-backup.service   # first backup now"

@@ -10,6 +10,7 @@ use rusqlite::{params, Connection};
 use std::path::Path;
 
 use crate::categories::{Categories, Category};
+use crate::model::{AppEvent, ResourceSample};
 
 /// Current schema version, stored in `meta(schema_version)`.
 pub const SCHEMA_VERSION: &str = "1";
@@ -69,6 +70,8 @@ pub struct DayStack {
     pub social_secs: i64,
     pub productivity_secs: i64,
     pub utilities_secs: i64,
+    pub gaming_secs: i64,
+    pub media_secs: i64,
     pub other_secs: i64,
     pub total_secs: i64,
 }
@@ -79,6 +82,8 @@ impl DayStack {
             Category::Social => self.social_secs,
             Category::ProductivityFinance => self.productivity_secs,
             Category::Utilities => self.utilities_secs,
+            Category::Gaming => self.gaming_secs,
+            Category::Media => self.media_secs,
             Category::Other => self.other_secs,
         }
     }
@@ -272,6 +277,38 @@ impl Store {
         Ok(out)
     }
 
+    /// Record a batch of events + samples in a single transaction (one
+    /// commit). Lock-tolerant: `busy_timeout` is 5000ms (see
+    /// [`Store::open_or_create`]); a still-held lock returns `Err` and the
+    /// caller retains its buffers (both are borrowed slices).
+    ///
+    /// `AppEvent.title == None` (redacted) is stored as `''`; the schema
+    /// columns are unchanged by the v2 contract.
+    pub fn record_batch(
+        &mut self,
+        events: &[AppEvent],
+        samples: &[ResourceSample],
+    ) -> Result<()> {
+        let tx =
+            self.conn.transaction().context("begin record_batch transaction")?;
+        for e in events {
+            tx.execute(
+                "INSERT INTO app_events (ts, app_id, title, dur_secs)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![e.ts, e.app_id, e.title.as_deref().unwrap_or(""), e.dur_secs],
+            )?;
+        }
+        for s in samples {
+            tx.execute(
+                "INSERT INTO resource_samples (ts, app_id, pid, cpu_pct, rss_kb, gpu_pct)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![s.ts, s.app_id, s.pid, s.cpu_pct, s.rss_kb, s.gpu_pct],
+            )?;
+        }
+        tx.commit().context("commit record_batch transaction")?;
+        Ok(())
+    }
+
     // ---- Query API ----
 
     /// Total focused seconds in `[start_ts, end_ts)`.
@@ -366,6 +403,8 @@ impl Store {
                 social_secs: 0,
                 productivity_secs: 0,
                 utilities_secs: 0,
+                gaming_secs: 0,
+                media_secs: 0,
                 other_secs: 0,
                 total_secs: 0,
             };
@@ -376,6 +415,8 @@ impl Store {
                         stack.productivity_secs += secs
                     }
                     Category::Utilities => stack.utilities_secs += secs,
+                    Category::Gaming => stack.gaming_secs += secs,
+                    Category::Media => stack.media_secs += secs,
                     Category::Other => stack.other_secs += secs,
                 }
                 stack.total_secs += secs;
@@ -421,6 +462,17 @@ impl Store {
     }
 
     // ---- Rollup cache ----
+
+    /// Rebuild that day's `daily_rollup` rows from the raw tables:
+    /// `secs = SUM(dur_secs)`, `avg_cpu = AVG(cpu_pct)`,
+    /// `peak_rss_kb = MAX(rss_kb)`, `avg_gpu = AVG(gpu_pct)`.
+    /// The daemon calls this for the current day on every 60s commit;
+    /// frontends read `daily_rollup` only.
+    ///
+    /// Spec name for [`Store::refresh_daily_rollup`] (same behavior).
+    pub fn refresh_day(&self, day: &str) -> Result<()> {
+        self.refresh_daily_rollup(day)
+    }
 
     /// Rebuild the `daily_rollup` rows for `day` from raw events + samples.
     pub fn refresh_daily_rollup(&self, day: &str) -> Result<()> {
@@ -686,6 +738,81 @@ mod tests {
         assert_eq!(ff.secs, 3600);
         assert!((ff.avg_cpu - 20.0).abs() < 1e-9);
         assert_eq!(ff.peak_rss_kb, 700000);
+    }
+
+    #[test]
+    fn record_batch_writes_events_and_samples_atomically() {
+        use crate::model::{AppEvent, ResourceSample};
+        let mut store = Store::open_in_memory().unwrap();
+        let events = vec![
+            AppEvent::new(ts("2026-01-05", 9), "firefox", Some("Example".into()), 120),
+            // Redacted title (None) is stored as '' — columns unchanged.
+            AppEvent::new(ts("2026-01-05", 10), "steam", None, 60),
+        ];
+        let samples = vec![
+            ResourceSample::new(ts("2026-01-05", 9), "firefox", 4242, 12.5, 123456, 3.5),
+            ResourceSample::new(ts("2026-01-05", 10), "steam", 777, 40.0, 900000, 25.0),
+        ];
+        store.record_batch(&events, &samples).unwrap();
+        assert_eq!(store.daily_total_secs("2026-01-05").unwrap(), 180);
+        let title: String = store
+            .conn
+            .query_row(
+                "SELECT title FROM app_events WHERE app_id = 'steam'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "");
+        let (start, end) = day_range("2026-01-05").unwrap();
+        let apps = store.per_app_totals(start, end).unwrap();
+        let steam = apps.iter().find(|a| a.app_id == "steam").unwrap();
+        assert!((steam.avg_cpu - 40.0).abs() < 1e-9);
+        assert_eq!(steam.peak_rss_kb, 900000);
+    }
+
+    #[test]
+    fn refresh_day_rebuilds_rollup_from_raw_tables() {
+        use crate::model::{AppEvent, ResourceSample};
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .record_batch(
+                &[AppEvent::new(ts("2026-01-05", 9), "vlc", None, 300)],
+                &[
+                    ResourceSample::new(ts("2026-01-05", 9), "vlc", 1, 10.0, 100, 2.0),
+                    ResourceSample::new(ts("2026-01-05", 10), "vlc", 1, 30.0, 500, 8.0),
+                ],
+            )
+            .unwrap();
+        store.refresh_day("2026-01-05").unwrap();
+        let rows = store.read_rollup("2026-01-05").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].secs, 300);
+        assert!((rows[0].avg_cpu - 20.0).abs() < 1e-9);
+        assert_eq!(rows[0].peak_rss_kb, 500);
+        assert!((rows[0].avg_gpu - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn seven_day_stacked_splits_gaming_and_media() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .batch(|tx| {
+                Store::insert_event(tx, ts("2026-01-11", 10), "steam", "", 3600)?;
+                Store::insert_event(tx, ts("2026-01-11", 11), "vlc", "", 1800)?;
+                Store::insert_event(tx, ts("2026-01-11", 12), "firefox", "", 900)?;
+                Ok(())
+            })
+            .unwrap();
+        let cats = Categories::builtin();
+        let week = store.seven_day_stacked("2026-01-11", &cats).unwrap();
+        let sat = &week[6];
+        assert_eq!(sat.gaming_secs, 3600);
+        assert_eq!(sat.media_secs, 1800);
+        assert_eq!(sat.social_secs, 900);
+        assert_eq!(sat.total_secs, 6300);
+        assert_eq!(sat.for_category(Category::Gaming), 3600);
+        assert_eq!(sat.for_category(Category::Media), 1800);
     }
 
     #[test]

@@ -112,8 +112,21 @@ async fn main() -> anyhow::Result<()> {
                 store.push_sample(sample);
             }
 
-            // 60s SQLite batch commit
+            // 60s SQLite batch commit (+ checkpoint the in-progress window
+            // so long single-window sessions are recorded even without focus switches)
             _ = commit_ticker.tick() => {
+                let now = Instant::now();
+                let dur_secs = now.duration_since(window_start).as_secs() as i64;
+                if dur_secs > 0 {
+                    store.push_event(AppEvent {
+                        ts: window_start_ts,
+                        app_id: current_window.app_id.clone(),
+                        title: current_window.title.clone(),
+                        dur_secs,
+                    });
+                    window_start = now;
+                    window_start_ts = Utc::now().timestamp();
+                }
                 if let Err(e) = store.flush() {
                     warn!(error = %e, "Batch commit deferred to next cycle");
                 }

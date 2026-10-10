@@ -12,7 +12,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/actwatch-daemon
+ExecStart=%h/.local/bin/actwatch-daemon --foreground
 # The whole point of this unit is that it is always running.
 Restart=always
 RestartSec=5s

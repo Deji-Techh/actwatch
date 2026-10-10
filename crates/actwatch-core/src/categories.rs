@@ -1,15 +1,18 @@
 //! App categories: TOML-driven mapping with builtin defaults.
 //!
 //! Canonical categories (match the dashboard legend):
-//! `Social`, `Productivity & Finance`, `Utilities`, `Other` (fallback).
+//! `Social`, `Productivity & Finance`, `Utilities`, `Gaming`, `Media`,
+//! `Other` (fallback).
 //!
-//! TOML format (user config overrides/merges over the builtins):
+//! TOML format (user config overrides/merges over the builtins). The
+//! canonical table is `[categories]`; `[apps]` is accepted as a legacy
+//! alias for the same table:
 //!
 //! ```toml
-//! [apps]
+//! [categories]
 //! firefox = "Social"
 //! code = "Productivity & Finance"
-//! steam = "Other"
+//! steam = "Gaming"
 //! ```
 
 use anyhow::{bail, Context, Result};
@@ -22,16 +25,20 @@ pub enum Category {
     Social,
     ProductivityFinance,
     Utilities,
+    Gaming,
+    Media,
     Other,
 }
 
 impl Category {
     /// All categories in legend order.
-    pub fn all() -> [Category; 4] {
+    pub fn all() -> [Category; 6] {
         [
             Category::Social,
             Category::ProductivityFinance,
             Category::Utilities,
+            Category::Gaming,
+            Category::Media,
             Category::Other,
         ]
     }
@@ -41,6 +48,8 @@ impl Category {
             Category::Social => "Social",
             Category::ProductivityFinance => "Productivity & Finance",
             Category::Utilities => "Utilities",
+            Category::Gaming => "Gaming",
+            Category::Media => "Media",
             Category::Other => "Other",
         }
     }
@@ -52,6 +61,8 @@ impl Category {
             "productivity & finance" | "productivity and finance" | "productivity"
             | "finance" => Ok(Category::ProductivityFinance),
             "utilities" | "utility" => Ok(Category::Utilities),
+            "gaming" | "games" | "game" => Ok(Category::Gaming),
+            "media" | "multimedia" | "video" | "music" => Ok(Category::Media),
             "other" | "misc" | "miscellaneous" | "uncategorized" => Ok(Category::Other),
             _ => bail!("unknown category: {s:?}"),
         }
@@ -66,6 +77,10 @@ impl std::fmt::Display for Category {
 
 #[derive(Debug, Deserialize, Default)]
 struct CategoryToml {
+    /// Canonical override table (v2 contract).
+    #[serde(default)]
+    categories: HashMap<String, String>,
+    /// Legacy alias for `[categories]` (pre-v2 config files).
     #[serde(default)]
     apps: HashMap<String, String>,
 }
@@ -82,8 +97,7 @@ pub struct Categories {
 }
 
 impl Categories {
-    /// Builtin defaults for common Linux apps. Media/creative/gaming apps
-    /// intentionally fall through to `Other` unless the user overrides them.
+    /// Builtin defaults for common Linux apps.
     pub fn builtin() -> Self {
         const SOCIAL: &[&str] = &[
             "firefox",
@@ -167,8 +181,18 @@ impl Categories {
             "caelestia",
             "hyprland",
         ];
+        const GAMING: &[&str] = &[
+            "steam",
+            "lutris",
+            "heroic",
+            "heroic-games-launcher",
+            "bottles",
+        ];
+        const MEDIA: &[&str] = &[
+            "vlc", "mpv", "obs", "obs-studio", "spotify",
+        ];
         let mut map = HashMap::with_capacity(
-            SOCIAL.len() + PRODUCTIVITY.len() + UTILITIES.len(),
+            SOCIAL.len() + PRODUCTIVITY.len() + UTILITIES.len() + GAMING.len() + MEDIA.len(),
         );
         for a in SOCIAL {
             map.insert(a.to_string(), Category::Social);
@@ -179,10 +203,18 @@ impl Categories {
         for a in UTILITIES {
             map.insert(a.to_string(), Category::Utilities);
         }
+        for a in GAMING {
+            map.insert(a.to_string(), Category::Gaming);
+        }
+        for a in MEDIA {
+            map.insert(a.to_string(), Category::Media);
+        }
         Self { map }
     }
 
-    /// Builtins plus overrides from a TOML string (`[apps]` table).
+    /// Builtins plus overrides from a TOML string (`[categories]` table;
+    /// legacy `[apps]` table is merged first, `[categories]` wins).
+    /// Unknown `[aliases]`/`[privacy]` keys are ignored.
     pub fn from_toml_str(s: &str) -> Result<Self> {
         let mut cats = Self::builtin();
         cats.apply_toml_str(s)?;
@@ -193,7 +225,8 @@ impl Categories {
     pub fn apply_toml_str(&mut self, s: &str) -> Result<()> {
         let parsed: CategoryToml =
             toml::from_str(s).context("parse categories TOML")?;
-        for (app_id, cat_name) in &parsed.apps {
+        // Legacy `[apps]` first so canonical `[categories]` wins on conflict.
+        for (app_id, cat_name) in parsed.apps.iter().chain(parsed.categories.iter()) {
             let cat =
                 Category::parse(cat_name).with_context(|| {
                     format!("invalid category for app {app_id:?}")
@@ -232,11 +265,20 @@ mod tests {
     }
 
     #[test]
-    fn unknown_and_media_apps_fall_back_to_other() {
+    fn builtin_gaming_and_media_defaults() {
         let c = Categories::builtin();
-        assert_eq!(c.categorize("steam"), Category::Other);
-        assert_eq!(c.categorize("vlc"), Category::Other);
-        assert_eq!(c.categorize("definitely-not-an-app"), Category::Other);
+        assert_eq!(c.categorize("steam"), Category::Gaming);
+        assert_eq!(c.categorize("lutris"), Category::Gaming);
+        assert_eq!(c.categorize("heroic"), Category::Gaming);
+        assert_eq!(c.categorize("bottles"), Category::Gaming);
+        assert_eq!(c.categorize("vlc"), Category::Media);
+        assert_eq!(c.categorize("mpv"), Category::Media);
+        assert_eq!(c.categorize("obs"), Category::Media);
+        assert_eq!(c.categorize("spotify"), Category::Media);
+        assert_eq!(
+            c.categorize("definitely-not-an-app"),
+            Category::Other
+        );
     }
 
     #[test]
@@ -259,6 +301,22 @@ mod tests {
     }
 
     #[test]
+    fn categories_table_is_canonical_and_wins_over_legacy_apps() {
+        let c = Categories::from_toml_str(
+            "[apps]\nvlc = \"Social\"\n[categories]\nvlc = \"Media\"\nmpv = \"Gaming\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.categorize("vlc"), Category::Media);
+        assert_eq!(c.categorize("mpv"), Category::Gaming);
+        // Unrelated config keys are ignored.
+        let c = Categories::from_toml_str(
+            "[aliases]\nfoo = \"Foo\"\n[privacy]\ntitles = \"full\"\n[categories]\nfoo = \"Social\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.categorize("foo"), Category::Social);
+    }
+
+    #[test]
     fn category_parse_accepts_aliases() {
         assert_eq!(Category::parse("social").unwrap(), Category::Social);
         assert_eq!(
@@ -266,6 +324,10 @@ mod tests {
             Category::ProductivityFinance
         );
         assert_eq!(Category::parse("utility").unwrap(), Category::Utilities);
-        assert!(Category::parse("Gaming").is_err());
+        assert_eq!(Category::parse("Gaming").unwrap(), Category::Gaming);
+        assert_eq!(Category::parse("games").unwrap(), Category::Gaming);
+        assert_eq!(Category::parse("Media").unwrap(), Category::Media);
+        assert_eq!(Category::parse("multimedia").unwrap(), Category::Media);
+        assert!(Category::parse("Arcade").is_err());
     }
 }

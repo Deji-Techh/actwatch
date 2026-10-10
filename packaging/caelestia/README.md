@@ -39,10 +39,44 @@ Add it to your session (Hyprland `exec-once`, alongside the shell itself):
 exec-once = qs -c actwatch-pill
 ```
 
-Top-right pill shows `◷ 2h 14m`. Left-click opens `actwatch-tui` in foot,
-right-click forces a refresh. The first paint shows `—` until the CLI answers.
+Top-right bar displays two monochrome pills:
+1. `✎ Notes`: Click toggles the quick-capture Notes popup (~430x540) anchored below the bar.
+2. `◷ 2h 14m`: Screen time pill. Left-click opens `actwatch-tui` in foot, right-click forces an immediate stats refresh. The first paint shows `—` until the CLI answers.
 
 Remove it with `pkill -f "qs -c actwatch-pill"` and deleting the directory.
+
+### Quick-Capture Notes Popup & Reminder Engine
+
+The Notes popup provides fast, distraction-free capture with zero binary state:
+
+#### Storage Layout (Obsidian-Compatible)
+- **Daily Inbox**: `~/Notes/inbox/YYYY-MM-DD.md` (e.g. `~/Notes/inbox/2026-10-10.md`). Opening the popup auto-loads today's file and creates directories if needed.
+- **Media Storage**: `~/Notes/media/` holds pasted images (`YYYYMMDD_HHMMSS.png`) and attached documents.
+- **Relative Markdown Links**: Images are referenced as `![](media/<file>)` and attachments as `[<file>](media/<file>)`, making the notes vault directly compatible with Obsidian and standard markdown tooling.
+
+#### Action Buttons & Controls
+- **Save**: Writes the editor content directly to today's markdown file in `~/Notes/inbox/`.
+- **Paste text**: Reads clipboard text via one-shot `wl-paste` and inserts at the cursor position or end of note.
+- **Paste image**: Detects image data via `wl-paste --list-types`, streams clipboard to `~/Notes/media/<YYYYMMDD_HHMMSS>.png`, and inserts an inline markdown image tag.
+- **Attach**: Small text field for any file path + Attach button. Copies the file into `~/Notes/media/` and appends a markdown link `[filename](media/filename)` (supports PDF, audio, video, images, or documents).
+- **Copy**: One-click copy of the entire note (or currently selected text) to clipboard via `wl-copy` with a visual confirmation flash.
+- **Remind**: Datetime field (`YYYY-MM-DD HH:MM`) + Remind button. Defaults to 1 minute in the future and takes text from the last line of the note, appending `- [ ] <datetime> <text>`.
+
+#### Reminder Engine Syntax & Lifecycle
+- **Reminder Syntax**:
+  ```markdown
+  - [ ] YYYY-MM-DD HH:MM <reminder message>
+  ```
+- **Scanning Engine**: Every 30 seconds, a background timer scans all `~/Notes/inbox/*.md` files for unnotified reminder items where the timestamp is due (`now >= scheduled_time`).
+- **Desktop Notification**: Due reminders execute:
+  ```sh
+  notify-send -u critical "actwatch reminder" "<text>"
+  ```
+- **Zero Binary State**: Upon dispatch, the engine appends `#notified` to the line in the markdown file:
+  ```markdown
+  - [ ] YYYY-MM-DD HH:MM <reminder message> #notified
+  ```
+  Because state lives directly in the markdown file, reminders never double-fire across restarts and require no background daemon or external database.
 
 ---
 

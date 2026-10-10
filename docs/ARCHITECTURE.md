@@ -55,3 +55,68 @@ resource columns only where they exist instead of showing stale or empty data.
 `ts` is unix seconds; day bucketing uses `date(ts,'unixepoch','localtime')` so
 days follow the local timezone including DST. `day` in `daily_rollup` is
 `YYYY-MM-DD` text, which sorts lexicographically.
+
+## v2 contract (FROZEN — implement exactly, additive changes only)
+
+All frontends (daemon writer, TUI, GUI, CLI) use `actwatch-core` for names,
+categories, titles, and rollup reads. No local category/name maps.
+
+### Display names — `core::names::DisplayNames`
+
+- `DisplayNames::load()` scans `/usr/share/applications` + `~/.local/share/applications`
+  for `*.desktop`, matching `StartupWMClass` (case-insensitive) and bare filename
+  stem against the Hyprland app-id. Uses `Name=` on match.
+- `resolve(app_id) -> String`: (1) `[aliases]` override from
+  `~/.config/actwatch/categories.toml`, (2) desktop-file match, (3) prettify:
+  strip reverse-DNS prefix (`com.t3tools.T3Code` → `T3Code`), replace `-_.`
+  with spaces, Title-Case each word.
+- Reserved id `"away"` (all idle/lock spans) resolves to `"Away"`.
+
+### Categories — six, from one source
+
+`core::Category::{Social, ProductivityFinance, Utilities, Gaming, Media, Other}`.
+`Categories::categorize(app_id)` = `[categories]` TOML overrides, then builtins
+(Steam/Lutris/Heroic/bottles → Gaming; vlc/mpv/obs/spotify → Media;
+browsers/chat → Social; editors/terminals → Productivity & Finance;
+settings/mixers/file managers → Utilities; else Other).
+`DisplayNames` and `Categories` both read the same TOML; display labels:
+"Social", "Productivity & Finance", "Utilities", "Gaming", "Media", "Other".
+
+### Titles — `core::TitlePolicy::{Off, Hash, Full}` (default `Off`)
+
+From `[privacy] titles = "off"|"hash"|"full"` in categories.toml.
+`redact(title) -> Option<String>`: Off → None (store NULL), Hash → sha-like
+hex (use std-only FNV/SipHash hex, no new deps), Full → Some(title).
+UI is app-level only and never renders titles.
+
+### Store batch + truthful rollups
+
+- `Store::record_batch(&mut self, events: &[AppEvent], samples: &[ResourceSample])`
+  — single transaction, lock-tolerant (busy_timeout 5000, return Err on lock,
+  caller retains buffers).
+- `Store::refresh_day(&self, day: &str)` — rebuilds that day's rollup rows from
+  raw tables: `secs = SUM(dur_secs)`, `avg_cpu = AVG(cpu_pct)`,
+  `peak_rss_kb = MAX(rss_kb)`, `avg_gpu = AVG(gpu_pct)`. Daemon calls it for the
+  current day on every 60s commit. Frontends read `daily_rollup` only.
+- `pub struct AppEvent { ts: i64, app_id: String, title: Option<String>, dur_secs: i64 }`
+  and `ResourceSample { ts, app_id: String, pid: i64, cpu_pct: f64, rss_kb: i64, gpu_pct: f64 }`
+  live in core (`core::model`) for all crates to share.
+
+### Away + permissions (daemon)
+
+- Idle = logind `IdleSinceHint` older than 120s (preferred, polled ≤ every 30s),
+  fallback hypridle `listen` if present, then lockscreen-class only. Idle spans
+  recorded under app_id `"away"`. Frontends exclude `"away"` from app totals
+  and render a separate muted Away card/row.
+- DB file created `0600`; daemon `chmod 0600`s existing file on open.
+
+### B&W theme (TUI + GUI)
+
+- Palette: background near-black `#0B0B0C`, surface `#141416`, text `#F4F4F5`,
+  muted `#8E8E93`, hairlines `#262628`. No hue anywhere.
+- Category series distinguished by shade + fill pattern (solid/dither/hatch
+  block chars in TUI; alpha + stripe textures in iced). Legend shows swatch +
+  label + total. Away always hatched/muted.
+- Keep existing keybindings (TUI) and layout language (header total + WoW delta,
+  7-day chart, category breakdown, sortable app table with friendly names,
+  search). CLI output stays plain monochrome (no ANSI color).

@@ -1,7 +1,4 @@
-use crate::core_shim::{
-    model::{AppEvent, ResourceSample},
-    StoreV2Ext,
-};
+use actwatch_core::model::{AppEvent, ResourceSample};
 use anyhow::{Context, Result};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;

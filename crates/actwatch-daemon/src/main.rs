@@ -1,16 +1,15 @@
 mod args;
 mod away;
-mod core_shim;
 mod hyprland;
 mod models;
 mod sampler;
 mod store;
 
+use actwatch_core::TitlePolicy;
 use anyhow::Result;
 use args::Args;
 use away::AwayDetector;
 use chrono::Utc;
-use core_shim::TitlePolicy;
 use hyprland::{query_active_window_oneshot, HyprlandManager};
 use models::{ActiveWindowInfo, AppEvent};
 use sampler::ResourceSampler;

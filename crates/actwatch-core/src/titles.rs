@@ -64,6 +64,24 @@ impl TitlePolicy {
         }
     }
 
+    /// Builtins plus `~/.config/actwatch/categories.toml` `[privacy]` table
+    /// when the file exists. Never fails hard: unreadable/missing config or
+    /// invalid value yields the default (`Off`).
+    pub fn load() -> Self {
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() {
+                let path = std::path::PathBuf::from(home)
+                    .join(".config/actwatch/categories.toml");
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    if let Ok(policy) = Self::from_toml_str(&content) {
+                        return policy;
+                    }
+                }
+            }
+        }
+        TitlePolicy::Off
+    }
+
     /// Apply the policy to a raw window title.
     pub fn redact(self, title: &str) -> Option<String> {
         match self {

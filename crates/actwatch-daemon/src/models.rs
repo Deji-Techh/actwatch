@@ -1,4 +1,4 @@
-pub use crate::core_shim::model::{AppEvent, ResourceSample};
+pub use actwatch_core::model::{AppEvent, ResourceSample};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveWindowInfo {

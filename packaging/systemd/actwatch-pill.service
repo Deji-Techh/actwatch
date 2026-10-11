@@ -1,0 +1,39 @@
+[Unit]
+Description=actwatch notes + screen-time pills
+Documentation=file:%h/.local/share/doc/actwatch/README.md
+Wants=graphical-session.target
+After=graphical-session.target
+# Follow the session like the collector does: logout stops it, so a stale
+# pill can never linger, and a fresh login brings it back via [Install].
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qs -c actwatch-pill
+Restart=always
+RestartSec=3s
+# Pills are widgets, not work: same deprioritization as the collector.
+CPUWeight=10
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=300M
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# Notes inbox + media live here; Qt shader/dbus caches need writes too.
+# Everything else stays read-only.
+ReadWritePaths=%h/.config/quickshell/actwatch-pill %h/Notes %h/.cache
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=graphical-session.target

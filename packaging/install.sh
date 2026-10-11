@@ -105,6 +105,13 @@ if command -v systemctl >/dev/null 2>&1 && (( WITH_SERVICE )); then
     log "enabling actwatch-backup.timer (weekly DB backup)"
     systemctl --user enable --now actwatch-backup.timer
   fi
+  if systemctl --user is-enabled --quiet actwatch-pill.service 2>/dev/null; then
+    log "actwatch-pill.service already enabled; restarting"
+    systemctl --user restart actwatch-pill.service
+  else
+    log "enabling actwatch-pill.service (notes + screen-time pills)"
+    systemctl --user enable --now actwatch-pill.service
+  fi
   log "status:"
   systemctl --user --no-pager status actwatch-daemon.service || true
 else

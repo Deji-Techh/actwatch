@@ -111,16 +111,26 @@ pub struct RollupRow {
     pub avg_gpu: f64,
 }
 
-/// Unix-timestamp bounds `[start, end)` for a `YYYY-MM-DD` day (UTC).
+/// Unix-timestamp bounds `[start, end)` for a `YYYY-MM-DD` day (local time).
 pub fn day_range(day: &str) -> Result<(i64, i64)> {
+    use chrono::TimeZone;
     let date =
         NaiveDate::parse_from_str(day, "%Y-%m-%d").with_context(|| {
             format!("invalid day {day:?}, expected YYYY-MM-DD")
         })?;
-    let start = date
-        .and_hms_opt(0, 0, 0)
-        .context("invalid midnight")?
-        .and_utc()
+    // Local midnight, NOT UTC midnight: interpreting a local day in UTC
+    // silently drops the first UTC-offset hours of every day (e.g. 00:00–01:00
+    // WAT belongs to the previous UTC day). DST gaps fold back one hour.
+    let naive_midnight = date.and_hms_opt(0, 0, 0).context("invalid midnight")?;
+    let start = chrono::Local
+        .from_local_datetime(&naive_midnight)
+        .single()
+        .or_else(|| {
+            chrono::Local
+                .from_local_datetime(&naive_midnight)
+                .earliest()
+        })
+        .context("day has no local midnight")?
         .timestamp();
     Ok((start, start + 86_400))
 }
@@ -539,8 +549,37 @@ mod tests {
             .timestamp()
     }
 
-    fn seeded() -> Result<Store> {
-        let mut store = Store::open_in_memory()?;
+    #[test]
+    fn refresh_day_counts_post_midnight_local_events() {
+        use chrono::{Local, TimeZone};
+        // 00:30 LOCAL — the hour a UTC-midnight day_range silently dropped in
+        // UTC+X zones (e.g. 00:00–01:00 WAT is the previous UTC day).
+        let store = Store::open_in_memory().unwrap();
+        let today = Local::now().date_naive();
+        let day = today.format("%Y-%m-%d").to_string();
+        let ts_0030 = Local
+            .from_local_datetime(&today.and_hms_opt(0, 30, 0).unwrap())
+            .single()
+            .map(|dt| dt.timestamp())
+            .unwrap_or_else(|| {
+                // DST spring-forward gap: 01:30 is unambiguously inside the day.
+                Local
+                    .from_local_datetime(&today.and_hms_opt(1, 30, 0).unwrap())
+                    .single()
+                    .unwrap()
+                    .timestamp()
+            });
+        store.record_event(ts_0030, "night-owl", "", 1800).unwrap();
+        store.refresh_day(&day).unwrap();
+        let rows = store.read_rollup(&day).unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r.app_id == "night-owl")
+            .expect("00:30 event must land in its local day");
+        assert_eq!(row.secs, 1800);
+    }
+
+    fn seeded() -> Result<Store> {        let mut store = Store::open_in_memory()?;
         store.batch(|tx| {
             // Mon 2026-01-05 .. Sun 2026-01-11, one event per app per day.
             let days = [
